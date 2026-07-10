@@ -5,8 +5,11 @@ from sqlmodel import SQLModel, Field
 class Lead(SQLModel, table=True):
     lead_id: str = Field(primary_key=True)
     customer_name: str
-    needs_summary: str
+    industry: str
+    pain_points: str  # Comma-separated or JSON list of pain points
     budget_range: str
+    previous_interactions: str
+    company_offering: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Proposal(SQLModel, table=True):

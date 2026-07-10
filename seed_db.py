@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sqlmodel import Session
 from shared.db import engine, init_db
 from agents.hr_agent.models import Job, Candidate
-from agents.it_agent.models import Ticket, RCAReport
+from agents.it_agent.models import Incident, RCAReport
 from agents.sales_agent.models import Lead, Proposal, Insight
 from agents.executive_agent.models import KPISnapshot
 
@@ -32,7 +32,7 @@ def seed_hr(session: Session):
             job_id="JOB-PY-001",
             title="Senior Python Backend Engineer",
             department="Engineering",
-            requirements=(
+            full_jd_text=(
                 "Required: Python 3.10+, FastAPI, PostgreSQL/SQLite, REST API design, Git. "
                 "Preferred: LangChain/LangGraph, Docker, Redis, asyncio, pytest. "
                 "Experience: 4+ years backend development. Soft skills: problem-solving, clear communication, ownership mindset."
@@ -43,7 +43,7 @@ def seed_hr(session: Session):
             job_id="JOB-ML-002",
             title="Machine Learning Engineer",
             department="AI Research",
-            requirements=(
+            full_jd_text=(
                 "Required: Python, PyTorch or TensorFlow, Scikit-learn, model training, hyperparameter tuning, Git. "
                 "Preferred: MLflow, Hugging Face Transformers, LLM fine-tuning, AWS SageMaker, vector databases. "
                 "Experience: 3+ years in ML/AI. Soft skills: curiosity, collaboration, documentation discipline."
@@ -54,7 +54,7 @@ def seed_hr(session: Session):
             job_id="JOB-FE-003",
             title="Frontend Engineer (React/Next.js)",
             department="Product",
-            requirements=(
+            full_jd_text=(
                 "Required: React 18+, Next.js, TypeScript, Vanilla CSS / Tailwind, REST API integration. "
                 "Preferred: Framer Motion, Figma collaboration, Web Accessibility (WCAG), PWA, Storybook. "
                 "Experience: 3+ years frontend. Soft skills: design eye, user empathy, communication."
@@ -132,35 +132,35 @@ def seed_hr(session: Session):
 
 
 def seed_it(session: Session):
-    print("\n⚙️  Seeding IT Agent data (historical tickets & RCA reports)...")
+    print("\n⚙️  Seeding IT Agent data (historical incidents & RCA reports)...")
 
-    tickets = [
-        Ticket(
-            ticket_id="TKT-HIST-001",
+    incidents = [
+        Incident(
+            incident_id="INC-HIST-001",
             affected_service="auth-service",
             severity="HIGH",
             status="resolved",
             description="Users unable to log in. Connection timeouts observed from auth-service to PostgreSQL. Database latency spiking above 500ms.",
             created_at=datetime.utcnow() - timedelta(days=60),
         ),
-        Ticket(
-            ticket_id="TKT-HIST-002",
+        Incident(
+            incident_id="INC-HIST-002",
             affected_service="checkout-service",
             severity="CRITICAL",
             status="resolved",
             description="Payment processing down. checkout-service returning 503. Root cause traced to OOM on payment pod.",
             created_at=datetime.utcnow() - timedelta(days=45),
         ),
-        Ticket(
-            ticket_id="TKT-HIST-003",
+        Incident(
+            incident_id="INC-HIST-003",
             affected_service="notification-service",
             severity="MEDIUM",
             status="resolved",
             description="Email notifications delayed by 30+ minutes. RabbitMQ queue backlog growing due to consumer lag.",
             created_at=datetime.utcnow() - timedelta(days=20),
         ),
-        Ticket(
-            ticket_id="TKT-HIST-004",
+        Incident(
+            incident_id="INC-HIST-004",
             affected_service="data-pipeline",
             severity="HIGH",
             status="resolved",
@@ -168,46 +168,50 @@ def seed_it(session: Session):
             created_at=datetime.utcnow() - timedelta(days=10),
         ),
     ]
-    for t in tickets:
-        existing = session.get(Ticket, t.ticket_id)
+    for inc in incidents:
+        existing = session.get(Incident, inc.incident_id)
         if not existing:
-            session.add(t)
+            session.add(inc)
     session.commit()
 
     rca_reports = [
         RCAReport(
             report_id="RCA-HIST-001",
-            ticket_id="TKT-HIST-001",
+            incident_id="INC-HIST-001",
             root_cause="Missing composite index on user_sessions table (user_id, created_at). Full table scan under high concurrency caused latency spike.",
             matched_known_issue="KI-0092: DB latency spike — missing index pattern",
             auto_remediated=False,
+            business_impact_summary="Auth latency degrading login success rate; estimated ~$4,200/min revenue at risk during peak traffic.",
             recommended_fix="Run: ALTER TABLE user_sessions ADD INDEX idx_session_lookup (user_id, created_at); Monitor query plan with EXPLAIN ANALYZE.",
             generated_at=datetime.utcnow() - timedelta(days=59),
         ),
         RCAReport(
             report_id="RCA-HIST-002",
-            ticket_id="TKT-HIST-002",
+            incident_id="INC-HIST-002",
             root_cause="checkout-service pod ran out of memory (OOMKilled) due to memory leak in payment-gateway SDK v2.3.1. No memory limits set on the container.",
             matched_known_issue="KI-0047: OOMKilled pod — missing resource limits",
             auto_remediated=False,
+            business_impact_summary="Checkout downtime causing direct revenue blockage; estimated ~$15,000/hr loss.",
             recommended_fix="Set memory limits in k8s manifest: resources.limits.memory=512Mi. Upgrade payment-gateway SDK to v2.4.0 which patches the leak.",
             generated_at=datetime.utcnow() - timedelta(days=44),
         ),
         RCAReport(
             report_id="RCA-HIST-003",
-            ticket_id="TKT-HIST-003",
+            incident_id="INC-HIST-003",
             root_cause="notification-service consumer scaled down to 1 replica during low-traffic window and was never scaled back up. Queue depth exceeded 10,000 messages.",
             matched_known_issue="KI-0031: RabbitMQ consumer lag — missing autoscaler",
             auto_remediated=True,
+            business_impact_summary="Delayed notifications causing customer support ticket spike (low direct financial risk).",
             recommended_fix="Deploy KEDA autoscaler based on queue depth metric. Set minReplicas=2 for notification-service to prevent cold-start lag.",
             generated_at=datetime.utcnow() - timedelta(days=19),
         ),
         RCAReport(
             report_id="RCA-HIST-004",
-            ticket_id="TKT-HIST-004",
+            incident_id="INC-HIST-004",
             root_cause="Null values introduced by upstream schema change in leads table (industry field made nullable). ETL job failed on non-null assertion in aggregation step.",
             matched_known_issue=None,
             auto_remediated=False,
+            business_impact_summary="Stale business analytics reporting. No direct traffic impact.",
             recommended_fix="Add COALESCE(industry, 'Unknown') in ETL transformation. Add schema validation step at pipeline entry to catch upstream changes early.",
             generated_at=datetime.utcnow() - timedelta(days=9),
         ),
@@ -217,7 +221,7 @@ def seed_it(session: Session):
         if not existing:
             session.add(r)
     session.commit()
-    print(f"   ✅ Inserted {len(tickets)} tickets and {len(rca_reports)} RCA reports.")
+    print(f"   ✅ Inserted {len(incidents)} incidents and {len(rca_reports)} RCA reports.")
 
 
 def seed_sales(session: Session):
@@ -227,22 +231,31 @@ def seed_sales(session: Session):
         Lead(
             lead_id="LEAD-001",
             customer_name="NovaTech Solutions",
-            needs_summary="High server latency affecting user experience. Outdated security protocols causing compliance risk. Needs scalable cloud infrastructure for 10x growth target.",
+            industry="FinTech",
+            pain_points="High server latency affecting user experience,Outdated security protocols causing compliance risk",
             budget_range="$200,000 - $350,000",
+            previous_interactions="Initial discovery call conducted on July 5th, client expressed interest in scalable cloud infra.",
+            company_offering="Managed AWS/OCI migration services with AI-driven monitoring.",
             created_at=datetime.utcnow() - timedelta(days=30),
         ),
         Lead(
             lead_id="LEAD-002",
             customer_name="FinCore Analytics",
-            needs_summary="Real-time data pipeline for financial reporting. Current batch ETL causing 4-hour data latency. Requires GDPR-compliant data residency in EU.",
+            industry="Finance",
+            pain_points="Current batch ETL causing 4-hour data latency,Outdated batch processes",
             budget_range="$80,000 - $120,000",
+            previous_interactions="Follow-up call on July 8th: discussed real-time Kafka streaming architectures.",
+            company_offering="Apache Kafka streaming pipeline integration with GDPR audit logging.",
             created_at=datetime.utcnow() - timedelta(days=20),
         ),
         Lead(
             lead_id="LEAD-003",
             customer_name="RetailMax India",
-            needs_summary="AI-powered inventory forecasting to reduce overstock by 30%. Current system manual and error-prone. Integration with SAP ERP required.",
+            industry="Retail / E-Commerce",
+            pain_points="Manual inventory tracking,Overstock levels exceeding 30%",
             budget_range="$50,000 - $75,000",
+            previous_interactions="Email exchange on July 9th regarding SAP ERP integration capability.",
+            company_offering="AI-powered inventory forecasting system.",
             created_at=datetime.utcnow() - timedelta(days=10),
         ),
     ]

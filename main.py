@@ -17,7 +17,7 @@ import agents.executive_agent.service as executive_service
 
 # Import models for types
 from agents.hr_agent.models import Job, Candidate
-from agents.it_agent.models import Ticket, RCAReport
+from agents.it_agent.models import Incident, RCAReport
 from agents.sales_agent.models import Lead, Proposal, Insight
 
 @asynccontextmanager
@@ -52,19 +52,27 @@ chat_router = APIRouter(prefix="/api/v1", tags=["Chat Routing"])
 class JobCreate(BaseModel):
     title: str
     department: str
-    requirements: str
+    full_jd_text: str
 
-class TicketCreate(BaseModel):
+class ResumeScreenRequest(BaseModel):
+    job_id: str
+    resume_text: str
+    full_jd_text: Optional[str] = None
+
+class IncidentCreate(BaseModel):
     affected_service: str
     description: str
 
-class TicketRCARequest(BaseModel):
+class IncidentRCARequest(BaseModel):
     logs: str
 
 class LeadCreate(BaseModel):
     customer_name: str
-    needs_summary: str
+    industry: str
+    pain_points: str
     budget_range: str
+    previous_interactions: str
+    company_offering: str
 
 class ProposalCreate(BaseModel):
     lead_id: str
@@ -86,7 +94,11 @@ class ChatRequest(BaseModel):
 
 @hr_router.post("/jobs", response_model=Job)
 def create_job(payload: JobCreate, session: Session = Depends(get_session)):
-    return hr_service.create_job(session, payload.title, payload.department, payload.requirements)
+    return hr_service.create_job(session, payload.title, payload.department, payload.full_jd_text)
+
+@hr_router.post("/resumes/screen", response_model=Candidate)
+def screen_resume(payload: ResumeScreenRequest, session: Session = Depends(get_session)):
+    return hr_service.screen_resume(session, payload.job_id, payload.resume_text, payload.full_jd_text)
 
 @hr_router.post("/resumes/upload", response_model=Candidate)
 async def upload_resume(
@@ -115,40 +127,48 @@ def get_candidate(candidate_id: str, session: Session = Depends(get_session)):
 
 # --- 2. IT Agent Endpoints ---
 
-@it_router.post("/tickets", response_model=Ticket)
-def submit_ticket(payload: TicketCreate, session: Session = Depends(get_session)):
-    return it_service.submit_ticket(session, payload.affected_service, payload.description)
+@it_router.post("/incidents", response_model=Incident)
+def submit_incident(payload: IncidentCreate, session: Session = Depends(get_session)):
+    return it_service.submit_incident(session, payload.affected_service, payload.description)
 
-@it_router.post("/tickets/{ticket_id}/triage", response_model=Ticket)
-def triage_ticket(ticket_id: str, session: Session = Depends(get_session)):
+@it_router.post("/incidents/{incident_id}/triage", response_model=Incident)
+def triage_incident(incident_id: str, session: Session = Depends(get_session)):
     try:
-        return it_service.triage_ticket(session, ticket_id)
+        return it_service.triage_incident(session, incident_id)
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
 
-@it_router.post("/tickets/{ticket_id}/rca", response_model=RCAReport)
-def generate_rca(ticket_id: str, payload: TicketRCARequest, session: Session = Depends(get_session)):
+@it_router.post("/incidents/{incident_id}/rca", response_model=RCAReport)
+def generate_rca(incident_id: str, payload: IncidentRCARequest, session: Session = Depends(get_session)):
     try:
-        return it_service.generate_rca(session, ticket_id, payload.logs)
+        return it_service.generate_rca(session, incident_id, payload.logs)
     except ValueError as ve:
         raise HTTPException(status_code=404, detail=str(ve))
-
-@it_router.get("/tickets/{ticket_id}", response_model=Ticket)
-def get_ticket(ticket_id: str, session: Session = Depends(get_session)):
-    ticket = it_service.get_ticket(session, ticket_id)
-    if not ticket:
-        raise HTTPException(status_code=404, detail="Ticket not found")
-    return ticket
 
 @it_router.get("/incidents/known-issues")
 def list_known_issues(session: Session = Depends(get_session)):
     return it_service.list_known_issues(session)
 
+@it_router.get("/incidents/{incident_id}", response_model=Incident)
+def get_incident(incident_id: str, session: Session = Depends(get_session)):
+    incident = it_service.get_incident(session, incident_id)
+    if not incident:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    return incident
+
 # --- 3. Sales Agent Endpoints ---
 
 @sales_router.post("/leads", response_model=Lead)
 def ingest_lead(payload: LeadCreate, session: Session = Depends(get_session)):
-    return sales_service.ingest_lead(session, payload.customer_name, payload.needs_summary, payload.budget_range)
+    return sales_service.ingest_lead(
+        session,
+        payload.customer_name,
+        payload.industry,
+        payload.pain_points,
+        payload.budget_range,
+        payload.previous_interactions,
+        payload.company_offering
+    )
 
 @sales_router.post("/insights/{lead_id}", response_model=Insight)
 def generate_insight(lead_id: str, session: Session = Depends(get_session)):

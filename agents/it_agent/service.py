@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Optional
 from sqlmodel import Session, select
 from pydantic import BaseModel, Field
-from agents.it_agent.models import Ticket, RCAReport
+from agents.it_agent.models import Incident, RCAReport
 from orchestrator.groq_client import groq_client
 from orchestrator.tools.embedding_tool import embed_and_store, similarity_search
 from shared.utils.logging import get_logger
@@ -19,39 +19,40 @@ class RCADiagnosis(BaseModel):
     root_cause: str = Field(..., description="Technical explanation of the error source")
     matched_known_issue: Optional[str] = Field(None, description="Known Issue ID if applicable, e.g. KI-0092")
     auto_remediated: bool = Field(..., description="True if issue was auto-recovered/fixed by runbooks")
+    business_impact_summary: str = Field(..., description="Business-facing severity/impact summary, e.g. estimating downtime cost or system degradation")
     recommended_fix: str = Field(..., description="Recommended manual fix steps")
 
 # --- Service Functions ---
 
-def submit_ticket(session: Session, affected_service: str, description: str, severity: str = "LOW") -> Ticket:
-    """Submits a new support incident ticket."""
-    ticket_id = f"tkt_{uuid.uuid4().hex[:8]}"
-    db_ticket = Ticket(
-        ticket_id=ticket_id,
+def submit_incident(session: Session, affected_service: str, description: str, severity: str = "LOW") -> Incident:
+    """Submits a new support incident."""
+    incident_id = f"inc_{uuid.uuid4().hex[:8]}"
+    db_incident = Incident(
+        incident_id=incident_id,
         affected_service=affected_service,
         severity=severity.upper(),
         status="open",
         description=description,
         created_at=datetime.utcnow()
     )
-    session.add(db_ticket)
+    session.add(db_incident)
     session.commit()
-    session.refresh(db_ticket)
-    logger.info(f"Submitted Ticket: {db_ticket.ticket_id} (Service: {db_ticket.affected_service})")
-    return db_ticket
+    session.refresh(db_incident)
+    logger.info(f"Submitted Incident: {db_incident.incident_id} (Service: {db_incident.affected_service})")
+    return db_incident
 
-def triage_ticket(session: Session, ticket_id: str) -> Ticket:
-    """Automates ticket triage: classifies severity based on description using Groq."""
-    ticket = session.exec(select(Ticket).where(Ticket.ticket_id == ticket_id)).first()
-    if not ticket:
-        raise ValueError(f"Ticket with ID {ticket_id} not found.")
+def triage_incident(session: Session, incident_id: str) -> Incident:
+    """Automates incident triage: classifies severity based on description using Groq."""
+    incident = session.exec(select(Incident).where(Incident.incident_id == incident_id)).first()
+    if not incident:
+        raise ValueError(f"Incident with ID {incident_id} not found.")
 
     system_prompt = (
-        "You are an automated IT triage system. Read the ticket details and determine the severity "
+        "You are an automated IT triage system. Read the incident details and determine the severity "
         "('LOW', 'MEDIUM', 'HIGH', 'CRITICAL'). CRITICAL is for outage of core services (e.g. checkout, database down). "
         "HIGH is for performance degradation. MEDIUM is for minor features. LOW is for visual bugs or queries."
     )
-    user_prompt = f"Service: {ticket.affected_service}\nDescription: {ticket.description}"
+    user_prompt = f"Service: {incident.affected_service}\nDescription: {incident.description}"
     messages = [{"role": "user", "content": user_prompt}]
 
     try:
@@ -60,32 +61,32 @@ def triage_ticket(session: Session, ticket_id: str) -> Ticket:
             system_prompt=system_prompt,
             response_schema=TriageResult
         )
-        ticket.severity = triage_res.severity.upper()
-        session.add(ticket)
+        incident.severity = triage_res.severity.upper()
+        session.add(incident)
         session.commit()
-        session.refresh(ticket)
-        logger.info(f"Triaged Ticket {ticket_id}: Severity set to {ticket.severity}")
+        session.refresh(incident)
+        logger.info(f"Triaged Incident {incident_id}: Severity set to {incident.severity}")
     except Exception as e:
-        logger.error(f"Error triaging ticket {ticket_id}: {e}")
+        logger.error(f"Error triaging incident {incident_id}: {e}")
         # Default to high on failure to be safe
-        ticket.severity = "HIGH"
-        session.add(ticket)
+        incident.severity = "HIGH"
+        session.add(incident)
         session.commit()
         
-    return ticket
+    return incident
 
-def generate_rca(session: Session, ticket_id: str, logs: str) -> RCAReport:
+def generate_rca(session: Session, incident_id: str, logs: str) -> RCAReport:
     """Indexes logs in ChromaDB, matches past incidents, and generates Root Cause Analysis using Groq."""
-    ticket = session.exec(select(Ticket).where(Ticket.ticket_id == ticket_id)).first()
-    if not ticket:
-        raise ValueError(f"Ticket with ID {ticket_id} not found.")
+    incident = session.exec(select(Incident).where(Incident.incident_id == incident_id)).first()
+    if not incident:
+        raise ValueError(f"Incident with ID {incident_id} not found.")
 
     # 1. Embed raw logs in ChromaDB collection
     embed_and_store(
         text=logs,
-        doc_id=ticket_id,
+        doc_id=incident_id,
         collection_name="it_incidents",
-        metadata={"affected_service": ticket.affected_service}
+        metadata={"affected_service": incident.affected_service}
     )
 
     # 2. Similarity search in ChromaDB to find similar past incident reports
@@ -98,18 +99,19 @@ def generate_rca(session: Session, ticket_id: str, logs: str) -> RCAReport:
     past_context = ""
     if past_incidents:
         past_context = "\n### Similar Past Incidents:\n" + "\n".join([
-            f"- Incident {m['id']}: {m['content'][:300]}" for m in past_incidents if m['id'] != ticket_id
+            f"- Incident {m['id']}: {m['content'][:300]}" for m in past_incidents if m['id'] != incident_id
         ])
 
     # 3. Call Groq for structured RCA analysis
     system_prompt = (
-        "You are a Site Reliability Engineer (SRE). Review the ticket description, current error logs, "
+        "You are a Site Reliability Engineer (SRE). Review the incident description, current error logs, "
         "and any similar historical incidents to diagnose the root cause. Explain the cause, decide if "
-        "it can be auto-remediated, specify a matched known issue ID if applicable, and offer remediation recommendations."
+        "it can be auto-remediated, specify a matched known issue ID if applicable, assess business impact summary, "
+        "and offer remediation recommendations."
     )
     user_prompt = (
-        f"### Ticket Description:\n{ticket.description}\n\n"
-        f"### Affected Service:\n{ticket.affected_service}\n\n"
+        f"### Incident Description:\n{incident.description}\n\n"
+        f"### Affected Service:\n{incident.affected_service}\n\n"
         f"### Raw Incident Logs:\n{logs}\n"
         f"{past_context}"
     )
@@ -122,11 +124,12 @@ def generate_rca(session: Session, ticket_id: str, logs: str) -> RCAReport:
             response_schema=RCADiagnosis
         )
     except Exception as e:
-        logger.error(f"Error diagnosing ticket {ticket_id} via LLM: {e}")
+        logger.error(f"Error diagnosing incident {incident_id} via LLM: {e}")
         diagnosis = RCADiagnosis(
             root_cause=f"Unable to diagnose: processing error ({e})",
             matched_known_issue=None,
             auto_remediated=False,
+            business_impact_summary="Unknown business impact summary.",
             recommended_fix="Review logs manually."
         )
 
@@ -134,27 +137,28 @@ def generate_rca(session: Session, ticket_id: str, logs: str) -> RCAReport:
     report_id = f"rca_{uuid.uuid4().hex[:8]}"
     db_report = RCAReport(
         report_id=report_id,
-        ticket_id=ticket_id,
+        incident_id=incident_id,
         root_cause=diagnosis.root_cause,
         matched_known_issue=diagnosis.matched_known_issue,
         auto_remediated=diagnosis.auto_remediated,
+        business_impact_summary=diagnosis.business_impact_summary,
         recommended_fix=diagnosis.recommended_fix,
         generated_at=datetime.utcnow()
     )
     session.add(db_report)
     
-    # Update Ticket Status
-    ticket.status = "resolved" if diagnosis.auto_remediated else "in_progress"
-    session.add(ticket)
+    # Update Incident Status
+    incident.status = "resolved" if diagnosis.auto_remediated else "in_progress"
+    session.add(incident)
     
     session.commit()
     session.refresh(db_report)
-    logger.info(f"Generated RCA report {db_report.report_id} for ticket {ticket_id}")
+    logger.info(f"Generated RCA report {db_report.report_id} for incident {incident_id}")
     return db_report
 
-def get_ticket(session: Session, ticket_id: str) -> Optional[Ticket]:
-    """Retrieves a single ticket by ID."""
-    return session.exec(select(Ticket).where(Ticket.ticket_id == ticket_id)).first()
+def get_incident(session: Session, incident_id: str) -> Optional[Incident]:
+    """Retrieves a single incident by ID."""
+    return session.exec(select(Incident).where(Incident.incident_id == incident_id)).first()
 
 def list_known_issues(session: Session) -> list[dict]:
     """Retrieves list of resolved issues with matching known issue patterns."""
@@ -168,7 +172,7 @@ def list_known_issues(session: Session) -> list[dict]:
     for r in reports:
         known_issues.append({
             "report_id": r.report_id,
-            "ticket_id": r.ticket_id,
+            "incident_id": r.incident_id,
             "matched_known_issue": r.matched_known_issue,
             "root_cause": r.root_cause,
             "recommended_fix": r.recommended_fix

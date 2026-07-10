@@ -7,12 +7,12 @@ def test_create_job(session: Session):
         session=session,
         title="Test Backend Developer",
         department="Engineering",
-        requirements="Python, FastAPI, Docker"
+        full_jd_text="Python, FastAPI, Docker"
     )
     assert job.job_id.startswith("job_")
     assert job.title == "Test Backend Developer"
     assert job.department == "Engineering"
-    assert job.requirements == "Python, FastAPI, Docker"
+    assert job.full_jd_text == "Python, FastAPI, Docker"
 
 def test_get_shortlist_empty(session: Session):
     shortlist = get_shortlist(session, "job_dummy")

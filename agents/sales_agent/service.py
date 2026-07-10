@@ -22,14 +22,25 @@ class ProposalDraftResult(BaseModel):
 
 # --- Service Functions ---
 
-def ingest_lead(session: Session, customer_name: str, needs_summary: str, budget_range: str) -> Lead:
+def ingest_lead(
+    session: Session, 
+    customer_name: str, 
+    industry: str, 
+    pain_points: str, 
+    budget_range: str, 
+    previous_interactions: str, 
+    company_offering: str
+) -> Lead:
     """Ingests a new sales lead from CRM system."""
     lead_id = f"lead_{uuid.uuid4().hex[:8]}"
     db_lead = Lead(
         lead_id=lead_id,
         customer_name=customer_name,
-        needs_summary=needs_summary,
+        industry=industry,
+        pain_points=pain_points,
         budget_range=budget_range,
+        previous_interactions=previous_interactions,
+        company_offering=company_offering,
         created_at=datetime.utcnow()
     )
     session.add(db_lead)
@@ -44,12 +55,19 @@ def generate_insight(session: Session, lead_id: str) -> Insight:
     if not lead:
         raise ValueError(f"Lead with ID {lead_id} not found.")
 
+    needs_summary = (
+        f"Industry: {lead.industry}\n"
+        f"Pain Points: {lead.pain_points}\n"
+        f"Previous Interactions: {lead.previous_interactions}\n"
+        f"Company Offering: {lead.company_offering}"
+    )
+
     system_prompt = (
-        "You are a sales intelligence agent. Analyze the provided needs summary of a customer. "
+        "You are a sales intelligence agent. Analyze the provided needs context of a customer. "
         "Determine the overall customer sentiment ('Positive', 'Neutral', or 'Negative') and extract "
         "a bulleted list of their primary needs."
     )
-    user_prompt = f"Customer Name: {lead.customer_name}\nNeeds: {lead.needs_summary}"
+    user_prompt = f"Customer Name: {lead.customer_name}\nContext:\n{needs_summary}"
     messages = [{"role": "user", "content": user_prompt}]
 
     try:
@@ -63,7 +81,7 @@ def generate_insight(session: Session, lead_id: str) -> Insight:
     except Exception as e:
         logger.error(f"Error analyzing lead insight {lead_id}: {e}")
         sentiment = "Neutral"
-        key_needs = f"- Focus on general requirements: {lead.needs_summary}"
+        key_needs = f"- Focus on general pain points: {lead.pain_points}"
 
     insight_id = f"ins_{uuid.uuid4().hex[:8]}"
     db_insight = Insight(
@@ -85,8 +103,15 @@ def generate_proposal(session: Session, lead_id: str, product_line: str) -> Prop
     if not lead:
         raise ValueError(f"Lead with ID {lead_id} not found.")
 
+    needs_summary = (
+        f"Industry: {lead.industry}\n"
+        f"Pain Points: {lead.pain_points}\n"
+        f"Previous Interactions: {lead.previous_interactions}\n"
+        f"Company Offering: {lead.company_offering}"
+    )
+
     # 1. Evaluate lead value and tier using scoring tool
-    scoring = score_lead(lead.needs_summary, lead.budget_range)
+    scoring = score_lead(needs_summary, lead.budget_range)
 
     # 2. Use Groq to draft specific proposal deliverables/key points
     system_prompt = (
@@ -95,7 +120,7 @@ def generate_proposal(session: Session, lead_id: str, product_line: str) -> Prop
     )
     user_prompt = (
         f"Customer: {lead.customer_name}\n"
-        f"Needs: {lead.needs_summary}\n"
+        f"Needs Context:\n{needs_summary}\n"
         f"Product Line: {product_line}\n"
         f"Recommended Tier: {scoring.recommended_tier}\n"
         f"Calculated Close Probability: {scoring.close_probability:.2%}"

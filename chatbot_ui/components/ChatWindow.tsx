@@ -152,22 +152,22 @@ ${candidateData.summary}`;
         setMessages((prev) => [...prev, agentMessage]);
 
       } else if (agentType === 'it') {
-        // Submit ticket automatically
-        const ticketRes = await fetch(`${backendUrl}/api/v1/it/tickets`, {
+        // Submit incident automatically
+        const incidentRes = await fetch(`${backendUrl}/api/v1/it/incidents`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             affected_service: "Infrastructure Log Analyzer",
-            description: `Automated analysis ticket for log file: ${file.name}`
+            description: `Automated analysis incident for log file: ${file.name}`
           })
         });
 
-        if (!ticketRes.ok) {
+        if (!incidentRes.ok) {
           throw new Error("Failed to initialize incident ticket");
         }
 
-        const ticketData = await ticketRes.json();
-        const ticketId = ticketData.ticket_id;
+        const incidentData = await incidentRes.json();
+        const incidentId = incidentData.incident_id;
 
         // Read log contents
         const reader = new FileReader();
@@ -176,7 +176,7 @@ ${candidateData.summary}`;
             const logsText = event.target?.result as string;
             
             // Run RCA analysis
-            const rcaRes = await fetch(`${backendUrl}/api/v1/it/tickets/${ticketId}/rca`, {
+            const rcaRes = await fetch(`${backendUrl}/api/v1/it/incidents/${incidentId}/rca`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ logs: logsText })
@@ -189,7 +189,7 @@ ${candidateData.summary}`;
             const rcaData = await rcaRes.json();
 
             const responseText = `⚙️ **Root Cause Analysis (RCA)**
-Incident: **${ticketId}**
+Incident: **${incidentId}**
 Service: **Infrastructure Log Analyzer**
 Auto-Remediated: **${rcaData.auto_remediated ? 'Yes (Fixed)' : 'No (Escalated to engineer)'}**
 Matched Known Issue: **${rcaData.matched_known_issue || 'None Matched'}**

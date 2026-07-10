@@ -24,20 +24,23 @@ class HRIntentDetection(BaseModel):
     intent: Literal["create_job", "none"]
     title: Optional[str] = Field(None, description="Title of the job role to create")
     department: Optional[str] = Field(None, description="Department for the job")
-    requirements: Optional[str] = Field(None, description="Detailed requirements for the position")
+    full_jd_text: Optional[str] = Field(None, description="Detailed job description text for the position")
 
 class ITIntentDetection(BaseModel):
-    intent: Literal["submit_ticket", "generate_rca", "none"]
+    intent: Literal["submit_incident", "generate_rca", "none"]
     affected_service: Optional[str] = Field(None, description="Service affected by the issue (e.g. checkout-service)")
-    description: Optional[str] = Field(None, description="Symptom or description of the ticket incident")
-    ticket_id: Optional[str] = Field(None, description="Ticket ID for log analysis (e.g. tkt_abcdef12)")
+    description: Optional[str] = Field(None, description="Symptom or description of the incident")
+    incident_id: Optional[str] = Field(None, description="Incident ID for log analysis (e.g. inc_abcdef12)")
     logs: Optional[str] = Field(None, description="Error logs for root cause analysis")
 
 class SalesIntentDetection(BaseModel):
     intent: Literal["ingest_lead", "generate_proposal", "none"]
     customer_name: Optional[str] = Field(None, description="Name of lead customer or company")
-    needs_summary: Optional[str] = Field(None, description="Summary of the customer's needs")
+    industry: Optional[str] = Field(None, description="Industry domain of the client (e.g. FinTech)")
+    pain_points: Optional[str] = Field(None, description="Key client problems / pain points to solve")
     budget_range: Optional[str] = Field(None, description="Budget range (e.g. $50,000 - $80,000)")
+    previous_interactions: Optional[str] = Field(None, description="Context of past calls or interactions")
+    company_offering: Optional[str] = Field(None, description="Services they are interested in (e.g. Migration)")
     lead_id: Optional[str] = Field(None, description="Lead ID to generate a proposal for")
     product_line: Optional[str] = Field(None, description="Specific product line/software name")
 
@@ -116,10 +119,10 @@ def hr_node(state: OrchestratorState) -> dict:
             system_prompt="Determine if the user wants to create a new job position. If so, extract the parameters.",
             response_schema=HRIntentDetection
         )
-        if hr_intent.intent == "create_job" and hr_intent.title and hr_intent.requirements:
+        if hr_intent.intent == "create_job" and hr_intent.title and hr_intent.full_jd_text:
             dept = hr_intent.department or "General"
             with Session(engine) as session:
-                job = hr_service.create_job(session, hr_intent.title, dept, hr_intent.requirements)
+                job = hr_service.create_job(session, hr_intent.title, dept, hr_intent.full_jd_text)
                 action_context = f"\n[DATABASE ACTION: Created job '{job.title}' with ID {job.job_id} in {job.department} department.]"
     except Exception as e:
         logger.error(f"HR Node intent detection failed: {e}")
@@ -148,7 +151,7 @@ def hr_node(state: OrchestratorState) -> dict:
     }
 
 def it_node(state: OrchestratorState) -> dict:
-    """Processes IT-related chat requests using Groq and handles database ticket submission / RCA diagnostics."""
+    """Processes IT-related chat requests using Groq and handles database incident submission / RCA diagnostics."""
     t0 = time.perf_counter()
     logger.info("Executing IT Orchestrator Node...")
     
@@ -158,24 +161,24 @@ def it_node(state: OrchestratorState) -> dict:
     try:
         it_intent = groq_client.structured_chat(
             messages=messages,
-            system_prompt="Determine if the user wants to submit a ticket or run root-cause analysis (RCA). Extract parameters.",
+            system_prompt="Determine if the user wants to submit an incident or run root-cause analysis (RCA). Extract parameters.",
             response_schema=ITIntentDetection
         )
-        if it_intent.intent == "submit_ticket" and it_intent.description:
+        if it_intent.intent == "submit_incident" and it_intent.description:
             service_name = it_intent.affected_service or "General Infrastructure"
             with Session(engine) as session:
-                ticket = it_service.submit_ticket(session, service_name, it_intent.description)
-                action_context = f"\n[DATABASE ACTION: Successfully submitted ticket '{ticket.ticket_id}' for service '{ticket.affected_service}' with status '{ticket.status}'.]"
-        elif it_intent.intent == "generate_rca" and it_intent.ticket_id and it_intent.logs:
+                incident = it_service.submit_incident(session, service_name, it_intent.description)
+                action_context = f"\n[DATABASE ACTION: Successfully submitted incident '{incident.incident_id}' for service '{incident.affected_service}' with status '{incident.status}'.]"
+        elif it_intent.intent == "generate_rca" and it_intent.incident_id and it_intent.logs:
             with Session(engine) as session:
-                rca = it_service.generate_rca(session, it_intent.ticket_id, it_intent.logs)
-                action_context = f"\n[DATABASE ACTION: Generated RCA report '{rca.report_id}' for ticket '{rca.ticket_id}'. Auto-remediated: {rca.auto_remediated}. Matched: {rca.matched_known_issue}.]"
+                rca = it_service.generate_rca(session, it_intent.incident_id, it_intent.logs)
+                action_context = f"\n[DATABASE ACTION: Generated RCA report '{rca.report_id}' for incident '{rca.incident_id}'. Auto-remediated: {rca.auto_remediated}. Matched: {rca.matched_known_issue}.]"
     except Exception as e:
         logger.error(f"IT Node intent detection failed: {e}")
 
     # 2. Conversational response
     system_prompt = (
-        "You are the IT Support & Incident Resolution Agent. You triage tickets, analyze log errors, and provide "
+        "You are the IT Support & Incident Resolution Agent. You triage incidents, analyze log errors, and provide "
         "root-cause analysis (RCA) recommendations. Keep your output professional and technical, offering step-by-step "
         "troubleshooting or escalation info where needed.\n"
         f"{action_context}"
@@ -210,10 +213,21 @@ def sales_node(state: OrchestratorState) -> dict:
             system_prompt="Determine if the user wants to ingest a new sales lead or generate a proposal. Extract parameters.",
             response_schema=SalesIntentDetection
         )
-        if sales_intent.intent == "ingest_lead" and sales_intent.customer_name and sales_intent.needs_summary:
+        if sales_intent.intent == "ingest_lead" and sales_intent.customer_name and sales_intent.pain_points:
             budget = sales_intent.budget_range or "Not specified"
+            industry = sales_intent.industry or "General"
+            prev_interactions = sales_intent.previous_interactions or "None"
+            offering = sales_intent.company_offering or "General Services"
             with Session(engine) as session:
-                lead = sales_service.ingest_lead(session, sales_intent.customer_name, sales_intent.needs_summary, budget)
+                lead = sales_service.ingest_lead(
+                    session, 
+                    sales_intent.customer_name, 
+                    industry, 
+                    sales_intent.pain_points, 
+                    budget, 
+                    prev_interactions, 
+                    offering
+                )
                 action_context = f"\n[DATABASE ACTION: Ingested lead '{lead.lead_id}' for customer '{lead.customer_name}'.]"
         elif sales_intent.intent == "generate_proposal" and sales_intent.lead_id:
             prod = sales_intent.product_line or "Cloud Enterprise Services"

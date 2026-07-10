@@ -1,6 +1,8 @@
-from datetime import date
+from datetime import date, datetime
+import json
+import uuid
 from sqlmodel import Session, select
-from agents.executive_agent.models import KPISnapshot
+from agents.executive_agent.models import KPISnapshot, DecisionSupportLog
 from shared.analytics.warehouse import run_etl
 from orchestrator.orchestrator import run_pipeline
 from shared.utils.logging import get_logger
@@ -18,7 +20,7 @@ def get_kpis(session: Session, range_str: str = "last_30_days") -> dict:
     # 2. Query snapshots for today
     today = date.today()
     snapshots = session.exec(
-        select(KPISnapshot).where(KPISnapshot.snapshot_date == today)
+        select(KPISnapshot).where(KPISnapshot.snapshot_date == today.isoformat())
     ).all()
 
     # Compile result structure
@@ -58,12 +60,50 @@ def get_trends(session: Session, metric: str) -> list[dict]:
     )
     history = session.exec(statement).all()
     return [
-        {"date": h.snapshot_date.isoformat(), "value": h.metric_value, "agent": h.source_agent}
+        {"date": h.snapshot_date, "value": h.metric_value, "agent": h.source_agent}
         for h in history
     ]
 
 def decision_support(session: Session, question: str) -> str:
-    """Asks the executive decision agent to address strategic queries using current dashboard metrics."""
+    """Asks the executive decision agent to address strategic queries using current dashboard metrics and logs the query."""
     logger.info(f"Running Executive decision support for: {question}")
+    
+    # 1. Fetch current snapshots to log system_context
+    today = date.today().isoformat()
+    snapshots = session.exec(
+        select(KPISnapshot).where(KPISnapshot.snapshot_date == today)
+    ).all()
+    
+    hr_snap = {}
+    it_snap = {}
+    sales_snap = {}
+    for s in snapshots:
+        if s.source_agent == "hr":
+            hr_snap[s.metric_name] = s.metric_value
+        elif s.source_agent == "it":
+            it_snap[s.metric_name] = s.metric_value
+        elif s.source_agent == "sales":
+            sales_snap[s.metric_name] = s.metric_value
+
+    # 2. Execute orchestrator pipeline
     agent_response = run_pipeline(query=question, domain="executive")
-    return agent_response.data.get("answer", "No decision support answer returned.")
+    answer = agent_response.data.get("answer", "No decision support answer returned.")
+    
+    # 3. Persist to DecisionSupportLog
+    log_id = f"ds_log_{uuid.uuid4().hex[:8]}"
+    db_log = DecisionSupportLog(
+        log_id=log_id,
+        leadership_query=question,
+        hr_snapshot=json.dumps(hr_snap),
+        it_snapshot=json.dumps(it_snap),
+        sales_snapshot=json.dumps(sales_snap),
+        executive_summary=answer[:500] + "..." if len(answer) > 500 else answer,
+        decision_support=json.dumps([answer]),
+        risk_flags=json.dumps([]),
+        generated_at=datetime.utcnow()
+    )
+    session.add(db_log)
+    session.commit()
+    logger.info(f"Persisted DecisionSupportLog entry: {log_id}")
+    
+    return answer

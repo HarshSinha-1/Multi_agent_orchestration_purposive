@@ -14,9 +14,9 @@ def init_db():
     """Initializes all database tables by importing all SQLModel subclasses."""
     # Import agent models here to register them with SQLModel metadata
     from agents.hr_agent.models import Job, Candidate  # noqa: F401
-    from agents.it_agent.models import Ticket, RCAReport  # noqa: F401
+    from agents.it_agent.models import Incident, RCAReport  # noqa: F401
     from agents.sales_agent.models import Lead, Proposal, Insight  # noqa: F401
-    from agents.executive_agent.models import KPISnapshot  # noqa: F401
+    from agents.executive_agent.models import KPISnapshot, DecisionSupportLog  # noqa: F401
     
     SQLModel.metadata.create_all(engine)
 

@@ -6,7 +6,7 @@ class Job(SQLModel, table=True):
     job_id: str = Field(primary_key=True)
     title: str
     department: str
-    requirements: str
+    full_jd_text: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
 
 class Candidate(SQLModel, table=True):

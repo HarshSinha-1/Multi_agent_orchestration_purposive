@@ -1,11 +1,12 @@
 from datetime import date
+import uuid
 from sqlmodel import Session, select, func
 from shared.db import engine
 from shared.utils.logging import get_logger
 
 # Import all models
 from agents.hr_agent.models import Job, Candidate
-from agents.it_agent.models import Ticket, RCAReport
+from agents.it_agent.models import Incident, RCAReport
 from agents.sales_agent.models import Lead, Proposal, Insight
 from agents.executive_agent.models import KPISnapshot
 
@@ -14,7 +15,7 @@ logger = get_logger(__name__)
 def run_etl():
     """Reads agent tables, calculates aggregate metrics, and populates KPI snapshots."""
     logger.info("Starting KPI ETL process...")
-    today = date.today()
+    today = date.today().isoformat()
     
     with Session(engine) as session:
         try:
@@ -35,10 +36,10 @@ def run_etl():
             shortlist_rate = (shortlisted_candidates / total_candidates) if total_candidates > 0 else 0.0
             
             # --- IT Metrics ---
-            # 1. Tickets Resolved
-            resolved_tickets = session.exec(
-                select(func.count(Ticket.ticket_id))
-                .where(Ticket.status == "resolved")
+            # 1. Incidents Resolved
+            resolved_incidents = session.exec(
+                select(func.count(Incident.incident_id))
+                .where(Incident.status == "resolved")
             ).one()
             
             # 2. Avg MTTR (MTTR values from RCA reports)
@@ -69,7 +70,7 @@ def run_etl():
                 ("hr", "open_positions", float(open_positions)),
                 ("hr", "avg_time_to_hire_days", float(avg_time_to_hire)),
                 ("hr", "shortlist_rate", float(shortlist_rate)),
-                ("it", "tickets_resolved", float(resolved_tickets)),
+                ("it", "tickets_resolved", float(resolved_incidents)),
                 ("it", "avg_mttr_minutes", float(avg_mttr)),
                 ("it", "auto_remediation_rate", float(auto_remediation_rate)),
                 ("sales", "proposals_generated", float(proposals_count)),
@@ -90,6 +91,7 @@ def run_etl():
                     existing.metric_value = val
                 else:
                     snapshot = KPISnapshot(
+                        snapshot_id=f"kpi_{uuid.uuid4().hex[:8]}",
                         source_agent=agent,
                         metric_name=name,
                         metric_value=val,
