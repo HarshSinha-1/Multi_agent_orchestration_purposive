@@ -7,10 +7,39 @@ from typing_extensions import TypedDict
 from pydantic import BaseModel, Field, model_validator
 from langgraph.graph import END, START, StateGraph
 
+from sqlmodel import Session
+from shared.db import engine
+import agents.hr_agent.service as hr_service
+import agents.it_agent.service as it_service
+import agents.sales_agent.service as sales_service
+
 from orchestrator.groq_client import groq_client
 from shared.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+# ── Intent Detection Schemas ──────────────────────────────────────────────────
+
+class HRIntentDetection(BaseModel):
+    intent: Literal["create_job", "none"]
+    title: Optional[str] = Field(None, description="Title of the job role to create")
+    department: Optional[str] = Field(None, description="Department for the job")
+    requirements: Optional[str] = Field(None, description="Detailed requirements for the position")
+
+class ITIntentDetection(BaseModel):
+    intent: Literal["submit_ticket", "generate_rca", "none"]
+    affected_service: Optional[str] = Field(None, description="Service affected by the issue (e.g. checkout-service)")
+    description: Optional[str] = Field(None, description="Symptom or description of the ticket incident")
+    ticket_id: Optional[str] = Field(None, description="Ticket ID for log analysis (e.g. tkt_abcdef12)")
+    logs: Optional[str] = Field(None, description="Error logs for root cause analysis")
+
+class SalesIntentDetection(BaseModel):
+    intent: Literal["ingest_lead", "generate_proposal", "none"]
+    customer_name: Optional[str] = Field(None, description="Name of lead customer or company")
+    needs_summary: Optional[str] = Field(None, description="Summary of the customer's needs")
+    budget_range: Optional[str] = Field(None, description="Budget range (e.g. $50,000 - $80,000)")
+    lead_id: Optional[str] = Field(None, description="Lead ID to generate a proposal for")
+    product_line: Optional[str] = Field(None, description="Specific product line/software name")
 
 # ── Pydantic Schemas ──────────────────────────────────────────────────────────
 
@@ -74,15 +103,33 @@ def _build_messages_with_history(state: OrchestratorState) -> list[dict]:
     return messages
 
 def hr_node(state: OrchestratorState) -> dict:
-    """Processes HR-related chat requests using Groq."""
+    """Processes HR-related chat requests using Groq and handles database jobs creation."""
     t0 = time.perf_counter()
     logger.info("Executing HR Orchestrator Node...")
     
+    # 1. Intent Detection
+    messages = [{"role": "user", "content": state["query"]}]
+    action_context = ""
+    try:
+        hr_intent = groq_client.structured_chat(
+            messages=messages,
+            system_prompt="Determine if the user wants to create a new job position. If so, extract the parameters.",
+            response_schema=HRIntentDetection
+        )
+        if hr_intent.intent == "create_job" and hr_intent.title and hr_intent.requirements:
+            dept = hr_intent.department or "General"
+            with Session(engine) as session:
+                job = hr_service.create_job(session, hr_intent.title, dept, hr_intent.requirements)
+                action_context = f"\n[DATABASE ACTION: Created job '{job.title}' with ID {job.job_id} in {job.department} department.]"
+    except Exception as e:
+        logger.error(f"HR Node intent detection failed: {e}")
+
+    # 2. Conversational response
     system_prompt = (
         "You are the HR Specialist Agent. You manage recruitment, resume screening, and job inquiries. "
         "Provide a detailed, helpful, and professional response to the user query. "
-        "Keep your output structured, clear, and focused on HR topics. If the user asks to screen a candidate, "
-        "give details about the process."
+        "Keep your output structured, clear, and focused on HR topics.\n"
+        f"{action_context}"
     )
     
     messages = _build_messages_with_history(state)
@@ -101,14 +148,37 @@ def hr_node(state: OrchestratorState) -> dict:
     }
 
 def it_node(state: OrchestratorState) -> dict:
-    """Processes IT-related chat requests using Groq."""
+    """Processes IT-related chat requests using Groq and handles database ticket submission / RCA diagnostics."""
     t0 = time.perf_counter()
     logger.info("Executing IT Orchestrator Node...")
     
+    # 1. Intent Detection
+    messages = [{"role": "user", "content": state["query"]}]
+    action_context = ""
+    try:
+        it_intent = groq_client.structured_chat(
+            messages=messages,
+            system_prompt="Determine if the user wants to submit a ticket or run root-cause analysis (RCA). Extract parameters.",
+            response_schema=ITIntentDetection
+        )
+        if it_intent.intent == "submit_ticket" and it_intent.description:
+            service_name = it_intent.affected_service or "General Infrastructure"
+            with Session(engine) as session:
+                ticket = it_service.submit_ticket(session, service_name, it_intent.description)
+                action_context = f"\n[DATABASE ACTION: Successfully submitted ticket '{ticket.ticket_id}' for service '{ticket.affected_service}' with status '{ticket.status}'.]"
+        elif it_intent.intent == "generate_rca" and it_intent.ticket_id and it_intent.logs:
+            with Session(engine) as session:
+                rca = it_service.generate_rca(session, it_intent.ticket_id, it_intent.logs)
+                action_context = f"\n[DATABASE ACTION: Generated RCA report '{rca.report_id}' for ticket '{rca.ticket_id}'. Auto-remediated: {rca.auto_remediated}. Matched: {rca.matched_known_issue}.]"
+    except Exception as e:
+        logger.error(f"IT Node intent detection failed: {e}")
+
+    # 2. Conversational response
     system_prompt = (
         "You are the IT Support & Incident Resolution Agent. You triage tickets, analyze log errors, and provide "
         "root-cause analysis (RCA) recommendations. Keep your output professional and technical, offering step-by-step "
-        "troubleshooting or escalation info where needed."
+        "troubleshooting or escalation info where needed.\n"
+        f"{action_context}"
     )
     
     messages = _build_messages_with_history(state)
@@ -127,13 +197,37 @@ def it_node(state: OrchestratorState) -> dict:
     }
 
 def sales_node(state: OrchestratorState) -> dict:
-    """Processes Sales-related chat requests using Groq."""
+    """Processes Sales-related chat requests using Groq and handles database lead ingestion / proposal generation."""
     t0 = time.perf_counter()
     logger.info("Executing Sales Orchestrator Node...")
     
+    # 1. Intent Detection
+    messages = [{"role": "user", "content": state["query"]}]
+    action_context = ""
+    try:
+        sales_intent = groq_client.structured_chat(
+            messages=messages,
+            system_prompt="Determine if the user wants to ingest a new sales lead or generate a proposal. Extract parameters.",
+            response_schema=SalesIntentDetection
+        )
+        if sales_intent.intent == "ingest_lead" and sales_intent.customer_name and sales_intent.needs_summary:
+            budget = sales_intent.budget_range or "Not specified"
+            with Session(engine) as session:
+                lead = sales_service.ingest_lead(session, sales_intent.customer_name, sales_intent.needs_summary, budget)
+                action_context = f"\n[DATABASE ACTION: Ingested lead '{lead.lead_id}' for customer '{lead.customer_name}'.]"
+        elif sales_intent.intent == "generate_proposal" and sales_intent.lead_id:
+            prod = sales_intent.product_line or "Cloud Enterprise Services"
+            with Session(engine) as session:
+                prop = sales_service.generate_proposal(session, sales_intent.lead_id, prod)
+                action_context = f"\n[DATABASE ACTION: Generated proposal '{prop.proposal_id}' valued at ${prop.estimated_value} for lead '{prop.lead_id}' under tier '{prop.pricing_tier}'.]"
+    except Exception as e:
+        logger.error(f"Sales Node intent detection failed: {e}")
+
+    # 2. Conversational response
     system_prompt = (
         "You are the Sales and Proposals Agent. You assist with lead management, proposal generation, and client insights. "
-        "Keep your output persuasive, client-centric, and clear, with clear calls-to-action or next steps."
+        "Keep your output persuasive, client-centric, and clear, with clear calls-to-action or next steps.\n"
+        f"{action_context}"
     )
     
     messages = _build_messages_with_history(state)
