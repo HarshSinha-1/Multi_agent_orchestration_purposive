@@ -2,7 +2,7 @@
 
 A modular, multi-agent platform where specialized AI agents automate core business functions — Human Resources, IT Operations, Sales, and Executive Reporting — and feed their outputs into a shared data layer that powers cross-functional insights.
 
-> **Prototype scope:** The current phase focuses on building a working chatbot prototype hosted on Vercel. The API Gateway is intentionally omitted at this stage — agents are reached directly. Groq API powers all LLM calls.
+> **Prototype scope:** The current phase focuses on building a working chatbot prototype run locally. The API Gateway is intentionally omitted at this stage — agents are reached directly. Groq API powers all LLM calls.
 
 ---
 
@@ -27,7 +27,7 @@ Each domain agent is autonomous — it owns its data pipeline and its own databa
 
 ```mermaid
 flowchart TB
-    subgraph Client["Client Layer (Vercel)"]
+    subgraph Client["Client Layer (Local)"]
         UI[Chatbot Web UI]
     end
 
@@ -501,14 +501,14 @@ erDiagram
 
 | Layer | Technology |
 |---|---|
-| **Chatbot UI** | Next.js — hosted on **Vercel** |
+| **Chatbot UI** | Next.js — run locally |
 | **Agent Services** | Python (FastAPI) |
 | **LLM / Brain Model** | **Groq API** (fast inference, e.g. `llama-3.3-70b-versatile` or `mixtral-8x7b`) |
 | **LLM Orchestration** | Custom orchestrator (`groq_client.py`) with tool-use for structured outputs |
 | **Relational DB** | PostgreSQL (one schema per agent) |
 | **Vector Store** | pgvector or a managed vector DB |
 | **Analytics Warehouse** | PostgreSQL materialized views |
-| **Deployment** | Vercel (chatbot UI) + local / cloud VM (agent backend) |
+| **Deployment** | Fully Local |
 
 ### Production (Future Phase)
 
@@ -545,7 +545,7 @@ VECTOR_STORE_URL=...
 2. Scaffold the four agent services with the folder structure in Section 4.
 3. Define Pydantic/ORM models matching the schema in Section 7.
 4. Implement the orchestrator with a shared prompt-template system per agent.
-5. Build and deploy the chatbot UI to Vercel.
+5. Build and run the chatbot UI locally.
 6. Wire the ETL job that populates `KPI_SNAPSHOTS` for the Executive Agent.
 7. Write integration tests simulating the end-to-end flows in Section 3.
 
