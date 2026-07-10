@@ -39,6 +39,7 @@ class OrchestratorState(TypedDict):
     domain: Literal["hr", "it", "sales", "executive"]
     response: Optional[AgentResponse]
     trace: list[str]
+    history: Optional[list[dict]]
 
 # ── Helper to build response ──────────────────────────────────────────────────
 
@@ -61,6 +62,17 @@ def _build_response(
 
 # ── Node Implementations ──────────────────────────────────────────────────────
 
+def _build_messages_with_history(state: OrchestratorState) -> list[dict]:
+    messages = []
+    if state.get("history"):
+        for msg in state["history"]:
+            role = msg.get("role", "user")
+            if role == "agent":
+                role = "assistant"
+            messages.append({"role": role, "content": msg.get("content", "")})
+    messages.append({"role": "user", "content": state["query"]})
+    return messages
+
 def hr_node(state: OrchestratorState) -> dict:
     """Processes HR-related chat requests using Groq."""
     t0 = time.perf_counter()
@@ -73,7 +85,7 @@ def hr_node(state: OrchestratorState) -> dict:
         "give details about the process."
     )
     
-    messages = [{"role": "user", "content": state["query"]}]
+    messages = _build_messages_with_history(state)
     content = groq_client.chat_completion(messages, system_prompt=system_prompt)
     
     response = _build_response(
@@ -99,7 +111,7 @@ def it_node(state: OrchestratorState) -> dict:
         "troubleshooting or escalation info where needed."
     )
     
-    messages = [{"role": "user", "content": state["query"]}]
+    messages = _build_messages_with_history(state)
     content = groq_client.chat_completion(messages, system_prompt=system_prompt)
     
     response = _build_response(
@@ -124,7 +136,7 @@ def sales_node(state: OrchestratorState) -> dict:
         "Keep your output persuasive, client-centric, and clear, with clear calls-to-action or next steps."
     )
     
-    messages = [{"role": "user", "content": state["query"]}]
+    messages = _build_messages_with_history(state)
     content = groq_client.chat_completion(messages, system_prompt=system_prompt)
     
     response = _build_response(
@@ -165,7 +177,7 @@ def executive_node(state: OrchestratorState) -> dict:
         f"### Current Dashboard Metrics:\n{metrics_summary}"
     )
     
-    messages = [{"role": "user", "content": state["query"]}]
+    messages = _build_messages_with_history(state)
     content = groq_client.chat_completion(messages, system_prompt=system_prompt)
     
     response = _build_response(
@@ -229,13 +241,18 @@ def build_graph() -> StateGraph:
 # Build the compiled graph once
 app = build_graph()
 
-def run_pipeline(query: str, domain: Literal["hr", "it", "sales", "executive"]) -> AgentResponse:
+def run_pipeline(
+    query: str, 
+    domain: Literal["hr", "it", "sales", "executive"], 
+    history: Optional[list[dict]] = None
+) -> AgentResponse:
     """Runs the multi-agent graph orchestration pipeline for a given query and domain."""
     initial_state: OrchestratorState = {
         "query": query,
         "domain": domain,
         "response": None,
-        "trace": []
+        "trace": [],
+        "history": history
     }
     final_state = app.invoke(initial_state)
     return final_state["response"]

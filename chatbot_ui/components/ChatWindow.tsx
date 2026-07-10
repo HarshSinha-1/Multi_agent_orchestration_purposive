@@ -283,6 +283,11 @@ ${rcaData.recommended_fix}`;
 
     try {
       const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+      const historyPayload = messages.map(msg => ({
+        role: msg.sender === 'user' ? 'user' : 'assistant',
+        content: msg.text
+      }));
+
       const response = await fetch(`${backendUrl}/api/v1/chat`, {
         method: 'POST',
         headers: {
@@ -291,6 +296,7 @@ ${rcaData.recommended_fix}`;
         body: JSON.stringify({
           message: userQuery,
           agent: agentType,
+          history: historyPayload
         }),
       });
 

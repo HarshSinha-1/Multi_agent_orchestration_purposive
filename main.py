@@ -73,9 +73,14 @@ class ProposalCreate(BaseModel):
 class DecisionRequest(BaseModel):
     question: str
 
+class ChatMessage(BaseModel):
+    role: str
+    content: str
+
 class ChatRequest(BaseModel):
     message: str
     agent: Literal["hr", "it", "sales", "executive"]
+    history: Optional[list[ChatMessage]] = None
 
 # --- 1. HR Agent Endpoints ---
 
@@ -190,7 +195,14 @@ def unified_chat(payload: ChatRequest):
     Orchestration Graph under the selected agent's environment.
     """
     try:
-        response = run_pipeline(query=payload.message, domain=payload.agent)
+        history_list = None
+        if payload.history:
+            history_list = [h.model_dump() for h in payload.history]
+        response = run_pipeline(
+            query=payload.message, 
+            domain=payload.agent, 
+            history=history_list
+        )
         return {
             "agent_id": response.agent_id,
             "status": response.status,
