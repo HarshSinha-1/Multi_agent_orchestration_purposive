@@ -1,0 +1,35 @@
+# Python virtual environments
+venv/
+ENV/
+env/
+.venv/
+
+# Python cache & compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Local databases & persistent indexes
+enterprise_agents.db
+chroma_db/
+
+# Next.js Node packages & build caches
+chatbot_ui/node_modules/
+chatbot_ui/.next/
+chatbot_ui/out/
+chatbot_ui/build/
+
+# Local environment variables & secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Operating System specific files
+.DS_Store
+Thumbs.db

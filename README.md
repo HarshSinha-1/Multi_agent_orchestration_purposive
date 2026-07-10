@@ -1,6 +1,8 @@
-# Enterprise Multi-Agent System
+# Enterprise Multi-Agent System (Prototype)
 
 A modular, multi-agent platform where specialized AI agents automate core business functions — Human Resources, IT Operations, Sales, and Executive Reporting — and feed their outputs into a shared data layer that powers cross-functional insights.
+
+> **Prototype scope:** The current phase focuses on building a working chatbot prototype hosted on Vercel. The API Gateway is intentionally omitted at this stage — agents are reached directly. Groq API powers all LLM calls.
 
 ---
 
@@ -13,20 +15,20 @@ A modular, multi-agent platform where specialized AI agents automate core busine
 | **Sales Agent** | Proposal Generation, Customer Insights | Sales Reps, Executive Agent |
 | **Executive Agent** | KPI Dashboard, Decision Support | Leadership |
 
-Each domain agent is autonomous — it owns its data pipeline, its own database tables, and exposes a REST API. The **Executive Agent** does not own primary data; it aggregates outputs from the other three agents (via their APIs or a shared analytics store) to generate cross-functional KPIs and decision-support recommendations.
+Each domain agent is autonomous — it owns its data pipeline and its own database tables. The **Executive Agent** does not own primary data; it aggregates outputs from the other three agents to generate cross-functional KPIs and decision-support recommendations.
+
+> **No API Gateway in prototype:** For the initial prototype, agents are called directly from the orchestrator without an intermediate gateway layer. Auth, rate-limiting, and routing will be added in a later production phase.
 
 ---
 
 ## 2. Architecture Diagram
 
+### Prototype Architecture
+
 ```mermaid
 flowchart TB
-    subgraph Client["Client Layer"]
-        UI[Web Dashboard / Chat UI]
-    end
-
-    subgraph Gateway["API Gateway"]
-        GW[Auth · Routing · Rate Limiting]
+    subgraph Client["Client Layer (Vercel)"]
+        UI[Chatbot Web UI]
     end
 
     subgraph Agents["Agent Layer"]
@@ -38,7 +40,7 @@ flowchart TB
 
     subgraph LLM["LLM / Orchestration"]
         ORCH[Agent Orchestrator]
-        MODEL[LLM Provider]
+        MODEL[Groq API<br/>Brain Model]
     end
 
     subgraph Data["Data Layer"]
@@ -55,8 +57,7 @@ flowchart TB
         CRM[CRM System]
     end
 
-    UI --> GW
-    GW --> HR & IT & SALES & EXEC
+    UI --> HR & IT & SALES & EXEC
     HR --> ORCH
     IT --> ORCH
     SALES --> ORCH
@@ -81,39 +82,40 @@ flowchart TB
     EXEC --> ANALYTICS
 ```
 
+> **Future (Production) Architecture:** An API Gateway layer (auth · routing · rate limiting) will be introduced between the Client and Agent layers once the prototype is validated.
+
 **Key design principles**
 - **Loose coupling:** Each agent is independently deployable with its own database schema and API surface.
 - **Shared orchestration:** All agents route LLM calls through a common orchestrator so prompts, model versions, and tool-use policies stay consistent.
+- **Groq as the brain:** The orchestrator uses Groq API for fast, low-latency LLM inference powering all agent reasoning.
 - **Single source of truth for KPIs:** The Executive Agent never writes to another agent's database — it only reads aggregated/derived data from the Analytics Warehouse.
-- **Vector store reuse:** Resumes, ticket logs, and CRM transcripts are embedded once and reused for both search (screening/triage) and semantic analysis (skills matching, RCA similarity, sentiment).
+- **Vector store reuse:** Resumes, ticket logs, and CRM transcripts are embedded once and reused for both search and semantic analysis.
 
 ---
 
 ## 3. How Requests Move Through The System
 
-### 3.1 General request lifecycle (applies to all agents)
+### 3.1 General request lifecycle — Prototype (direct routing)
 
 ```mermaid
 sequenceDiagram
-    participant U as User / Caller
-    participant GW as API Gateway
+    participant U as User (Chatbot UI)
     participant AG as Domain Agent (HR/IT/Sales/Exec)
     participant OR as Orchestrator
-    participant LLM as LLM Provider
+    participant GROQ as Groq API (Brain Model)
     participant DB as Domain Database
 
-    U->>GW: POST /api/v1/{agent}/{action}
-    GW->>GW: Authenticate + validate payload
-    GW->>AG: Forward request
+    U->>AG: Direct POST /agent/{action}
     AG->>DB: Fetch context (existing records)
     AG->>OR: Build prompt + attach context/tools
-    OR->>LLM: Send completion/tool-use request
-    LLM-->>OR: Structured response (JSON)
+    OR->>GROQ: Send completion/tool-use request
+    GROQ-->>OR: Structured response (JSON)
     OR-->>AG: Parsed result
     AG->>DB: Persist result (scores, report, proposal, etc.)
-    AG-->>GW: Response payload
-    GW-->>U: 200 OK + JSON body
+    AG-->>U: Response payload
 ```
+
+> **Note:** In the production version, an API Gateway will sit between the User and the Agent layer, handling authentication, payload validation, and routing.
 
 ### 3.2 Example: Resume Screening flow (HR Agent)
 
@@ -162,19 +164,7 @@ flowchart LR
 ```
 enterprise-agent-system/
 ├── README.md
-├── docker-compose.yml
 ├── .env.example
-│
-├── gateway/
-│   ├── main.py                  # API gateway entrypoint, auth, routing
-│   ├── middleware/
-│   │   ├── auth.py
-│   │   └── rate_limit.py
-│   └── routes/
-│       ├── hr_routes.py
-│       ├── it_routes.py
-│       ├── sales_routes.py
-│       └── executive_routes.py
 │
 ├── agents/
 │   ├── hr_agent/
@@ -217,7 +207,7 @@ enterprise-agent-system/
 │   ├── tools/
 │   │   ├── embedding_tool.py
 │   │   └── scoring_tool.py
-│   └── llm_client.py
+│   └── groq_client.py            # Groq API client (brain model calls)
 │
 ├── shared/
 │   ├── vector_store/
@@ -232,6 +222,11 @@ enterprise-agent-system/
 │   ├── migrations/
 │   └── schema.sql                # Full DB schema (see Section 7)
 │
+├── chatbot_ui/                   # Vercel-hosted Next.js chatbot frontend
+│   ├── pages/
+│   ├── components/
+│   └── vercel.json
+│
 └── tests/
     ├── hr_agent/
     ├── it_agent/
@@ -239,11 +234,13 @@ enterprise-agent-system/
     └── executive_agent/
 ```
 
+> **Removed from prototype:** `gateway/` directory (auth middleware, rate limiting, gateway routes) — to be added in the production phase.
+
 ---
 
 ## 5. API Endpoints
 
-All endpoints are versioned under `/api/v1` and routed through the API Gateway.
+All endpoints are called **directly** from the chatbot UI or orchestrator (no gateway in prototype). Versioning is maintained for forward compatibility.
 
 ### 5.1 HR Agent
 
@@ -498,26 +495,58 @@ erDiagram
 
 ---
 
-## 8. Tech Stack Recommendation
+## 8. Tech Stack
 
-| Layer | Suggested Technology |
+### Prototype (Current Phase)
+
+| Layer | Technology |
 |---|---|
-| API Gateway | FastAPI / Express.js + JWT auth |
-| Agent Services | Python (FastAPI) or Node.js microservices |
-| LLM Orchestration | Anthropic API (Claude) with tool-use for structured outputs |
-| Relational DB | PostgreSQL (one schema per agent) |
-| Vector Store | pgvector or a managed vector DB |
-| Analytics Warehouse | PostgreSQL materialized views or a lightweight OLAP store |
-| Messaging (optional) | Kafka/RabbitMQ for async ticket/lead ingestion |
-| Deployment | Docker Compose (dev) → Kubernetes (prod) |
+| **Chatbot UI** | Next.js — hosted on **Vercel** |
+| **Agent Services** | Python (FastAPI) |
+| **LLM / Brain Model** | **Groq API** (fast inference, e.g. `llama-3.3-70b-versatile` or `mixtral-8x7b`) |
+| **LLM Orchestration** | Custom orchestrator (`groq_client.py`) with tool-use for structured outputs |
+| **Relational DB** | PostgreSQL (one schema per agent) |
+| **Vector Store** | pgvector or a managed vector DB |
+| **Analytics Warehouse** | PostgreSQL materialized views |
+| **Deployment** | Vercel (chatbot UI) + local / cloud VM (agent backend) |
+
+### Production (Future Phase)
+
+| Layer | Technology |
+|---|---|
+| **API Gateway** | FastAPI / Express.js + JWT auth, rate limiting, routing |
+| **Messaging (optional)** | Kafka / RabbitMQ for async ticket/lead ingestion |
+| **Deployment** | Docker Compose (dev) → Kubernetes (prod) |
 
 ---
 
-## 9. Next Steps
+## 9. Environment Variables
 
-1. Scaffold the four agent services with the folder structure above.
-2. Define Pydantic/ORM models matching the schema in Section 7.
-3. Implement the orchestrator with a shared prompt-template system per agent.
-4. Wire the ETL job that populates `KPI_SNAPSHOTS` for the Executive Agent.
-5. Add authentication and role-based access control at the gateway level.
-6. Write integration tests simulating the end-to-end flows in Section 3.
+```env
+# Groq API — brain model
+GROQ_API_KEY=your_groq_api_key_here
+GROQ_MODEL=llama-3.3-70b-versatile        # or mixtral-8x7b, gemma2-9b-it, etc.
+
+# Database
+DATABASE_URL=postgresql://user:password@host:5432/enterprise_agents
+
+# Vector Store
+VECTOR_STORE_URL=...
+
+# (Future) Auth — not needed for prototype
+# JWT_SECRET=...
+```
+
+---
+
+## 10. Next Steps (Prototype)
+
+1. Set up the Groq API client in `orchestrator/groq_client.py`.
+2. Scaffold the four agent services with the folder structure in Section 4.
+3. Define Pydantic/ORM models matching the schema in Section 7.
+4. Implement the orchestrator with a shared prompt-template system per agent.
+5. Build and deploy the chatbot UI to Vercel.
+6. Wire the ETL job that populates `KPI_SNAPSHOTS` for the Executive Agent.
+7. Write integration tests simulating the end-to-end flows in Section 3.
+
+> **Production backlog:** Add API Gateway (auth, rate limiting, routing), Docker/Kubernetes deployment, and role-based access control once the prototype is validated.
