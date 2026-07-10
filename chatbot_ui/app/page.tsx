@@ -9,10 +9,10 @@ export default function Home() {
 
   return (
     <main className="app-container">
-      <div style={{ height: '100%' }}>
+      <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
         <AgentSelector selectedAgent={selectedAgent} onChange={setSelectedAgent} />
       </div>
-      <div style={{ height: '100%' }}>
+      <div style={{ height: '100%', minHeight: 0, overflow: 'hidden' }}>
         <ChatWindow agentType={selectedAgent} />
       </div>
     </main>

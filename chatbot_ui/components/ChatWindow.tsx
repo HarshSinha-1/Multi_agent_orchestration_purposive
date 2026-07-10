@@ -423,7 +423,7 @@ ${rcaData.recommended_fix}`;
       )}
 
       {/* Chat Messages Log */}
-      <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flexGrow: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
         {messages.map((msg) => (
           <MessageBubble key={msg.id} message={msg} />
         ))}
