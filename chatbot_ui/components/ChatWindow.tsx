@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Message, MessageBubble } from './MessageBubble';
 import { AgentType } from './AgentSelector';
 import { TypingIndicator } from './TypingIndicator';
-import { Send, AlertCircle, RefreshCw } from 'lucide-react';
+import { Send, AlertCircle, RefreshCw, Paperclip } from 'lucide-react';
 
 interface ChatWindowProps {
   agentType: AgentType;
@@ -19,6 +19,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
   const [loadingKpis, setLoadingKpis] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Initialize with greeting messages matching the agent
   useEffect(() => {
@@ -65,6 +66,200 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
       console.error("Failed to load KPIs", err);
     } finally {
       setLoadingKpis(false);
+    }
+  };
+
+  const handleAttachmentClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setErrorMsg('');
+    setIsLoading(true);
+
+    const userMsgText = `📎 [Attached File: ${file.name}]`;
+    const userMessage: Message = {
+      id: 'usr_' + Date.now(),
+      sender: 'user',
+      text: userMsgText,
+      timestamp: new Date(),
+    };
+    setMessages((prev) => [...prev, userMessage]);
+
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+
+    try {
+      if (agentType === 'hr') {
+        // Create requisition automatically
+        const jobRes = await fetch(`${backendUrl}/api/v1/hr/jobs`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            title: "Automated Evaluation Requisition",
+            department: "AI & Software Division",
+            requirements: "Requires developer experience, programming languages (Python, JavaScript, Go etc), framework knowledge (FastAPI, React etc), database usage (SQL/NoSQL) and vector indexing."
+          })
+        });
+
+        if (!jobRes.ok) {
+          throw new Error("Failed to initialize job requisition for candidate screening");
+        }
+
+        const jobData = await jobRes.json();
+        const jobId = jobData.job_id;
+
+        // Upload resume via FormData
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('job_id', jobId);
+
+        const uploadRes = await fetch(`${backendUrl}/api/v1/hr/resumes/upload`, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!uploadRes.ok) {
+          throw new Error("Failed to process resume screening on server");
+        }
+
+        const candidateData = await uploadRes.json();
+
+        // Format evaluation results
+        const responseText = `📄 **Resume Screening Results**
+Candidate: **${candidateData.name}**
+Match Score: **${(candidateData.match_score * 100).toFixed(0)}%**
+Recommendation: **${candidateData.recommendation.toUpperCase()}**
+
+**Skills Matched:**
+${candidateData.skills ? candidateData.skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
+
+**Skills Missing:**
+${candidateData.missing_skills ? candidateData.missing_skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
+
+**Summary Evaluation:**
+${candidateData.summary}`;
+
+        const agentMessage: Message = {
+          id: 'agt_' + Date.now(),
+          sender: 'agent',
+          text: responseText,
+          agentType: 'hr',
+          timestamp: new Date(),
+        };
+        setMessages((prev) => [...prev, agentMessage]);
+
+      } else if (agentType === 'it') {
+        // Submit ticket automatically
+        const ticketRes = await fetch(`${backendUrl}/api/v1/it/tickets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            affected_service: "Infrastructure Log Analyzer",
+            description: `Automated analysis ticket for log file: ${file.name}`
+          })
+        });
+
+        if (!ticketRes.ok) {
+          throw new Error("Failed to initialize incident ticket");
+        }
+
+        const ticketData = await ticketRes.json();
+        const ticketId = ticketData.ticket_id;
+
+        // Read log contents
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const logsText = event.target?.result as string;
+            
+            // Run RCA analysis
+            const rcaRes = await fetch(`${backendUrl}/api/v1/it/tickets/${ticketId}/rca`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ logs: logsText })
+            });
+
+            if (!rcaRes.ok) {
+              throw new Error("Failed to execute log diagnostics on server");
+            }
+
+            const rcaData = await rcaRes.json();
+
+            const responseText = `⚙️ **Root Cause Analysis (RCA)**
+Incident: **${ticketId}**
+Service: **Infrastructure Log Analyzer**
+Auto-Remediated: **${rcaData.auto_remediated ? 'Yes (Fixed)' : 'No (Escalated to engineer)'}**
+Matched Known Issue: **${rcaData.matched_known_issue || 'None Matched'}**
+
+**Technical Root Cause:**
+${rcaData.root_cause}
+
+**Recommended Action Steps:**
+${rcaData.recommended_fix}`;
+
+            const agentMessage: Message = {
+              id: 'agt_' + Date.now(),
+              sender: 'agent',
+              text: responseText,
+              agentType: 'it',
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, agentMessage]);
+          } catch (err: any) {
+            setErrorMsg(err.message || 'Log analysis failed.');
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        reader.readAsText(file);
+        return;
+
+      } else {
+        // Fallback for sales/executive
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const fileContent = event.target?.result as string;
+            
+            const response = await fetch(`${backendUrl}/api/v1/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                message: `Analyzing file content for ${file.name}:\n\n${fileContent.slice(0, 4000)}`,
+                agent: agentType,
+              }),
+            });
+
+            if (!response.ok) throw new Error("Failed file query processing");
+
+            const data = await response.json();
+            const agentMessage: Message = {
+              id: 'agt_' + Date.now(),
+              sender: 'agent',
+              text: data.answer || "No response received.",
+              agentType: agentType,
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, agentMessage]);
+          } catch (err: any) {
+            setErrorMsg(err.message || 'Generic file upload failed.');
+          } finally {
+            setIsLoading(false);
+          }
+        };
+        reader.readAsText(file);
+        return;
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'Attachment upload failed.');
+    } finally {
+      if (agentType === 'hr') {
+        setIsLoading(false);
+      }
     }
   };
 
@@ -267,6 +462,34 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
           alignItems: 'center',
         }}
       >
+        <input
+          type="file"
+          ref={fileInputRef}
+          onChange={handleFileUpload}
+          style={{ display: 'none' }}
+          accept={agentType === 'hr' ? '.pdf,.txt,.doc,.docx' : agentType === 'it' ? '.log,.txt' : '*'}
+        />
+        <button
+          type="button"
+          onClick={handleAttachmentClick}
+          disabled={isLoading}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            width: '48px',
+            height: '48px',
+            borderRadius: '12px',
+            background: 'rgba(255,255,255,0.03)',
+            border: '1px solid var(--border-glass)',
+            color: 'var(--text-secondary)',
+            cursor: 'pointer',
+            transition: 'var(--transition-smooth)',
+            outline: 'none',
+          }}
+        >
+          <Paperclip size={18} />
+        </button>
         <input
           type="text"
           value={inputValue}
