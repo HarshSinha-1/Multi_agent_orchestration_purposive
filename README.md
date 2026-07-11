@@ -1,23 +1,19 @@
-# Enterprise Multi-Agent System (Prototype)
+# Enterprise Multi-Agent System
 
-A modular, multi-agent platform where specialized AI agents automate core business functions — Human Resources, IT Operations, Sales, and Executive Reporting — and feed their outputs into a shared data layer that powers cross-functional insights.
-
-> **Prototype scope:** The current phase focuses on building a working chatbot prototype run locally. The API Gateway is intentionally omitted at this stage — agents are reached directly. **Groq API** powers all LLM calls.
+A modular, multi-agent platform where specialized AI agents automate core business functions — Human Resources, IT Operations, Sales, and Executive Reporting — and feed their outputs into a shared data layer that powers cross-functional insights. All agents route through a shared orchestrator that now also has **MCP (Model Context Protocol) access to Notion**, letting agents read from and write to Notion workspaces (candidate trackers, incident logs, proposal docs, executive dashboards) as a first-class tool, not just an internal DB.
 
 ---
 
 ## 1. Project Overview
 
-| Agent | Core Responsibilities | Primary Consumers |
-|---|---|---|
-| **HR Agent** | Recruitment, Resume Screening | Hiring Managers, Executive Agent |
-| **IT Agent** | Incident Resolution, Root Cause Analysis | IT Ops Team, Executive Agent |
-| **Sales Agent** | Proposal Generation, Customer Insights | Sales Reps, Executive Agent |
-| **Executive Agent** | KPI Dashboard, Decision Support | Leadership |
+| Agent | Core Responsibilities | Primary Consumers | Notion MCP Usage |
+|---|---|---|---|
+| **HR Agent** | Recruitment, Resume Screening | Hiring Managers, Executive Agent | Pushes job requisitions to a Notion **"Job Descriptions"** database and shortlisted candidates + score breakdowns to a Notion "Candidates" database |
+| **IT Agent** | Incident Resolution, Root Cause Analysis | IT Ops Team, Executive Agent | Writes RCA reports to a Notion "Incidents" database; can read runbook pages |
+| **Sales Agent** | Proposal Generation, Customer Insights | Sales Reps, Executive Agent | Publishes generated proposals as Notion pages; logs customer insights |
+| **Executive Agent** | KPI Dashboard, Decision Support | Leadership | Syncs KPI snapshots to a Notion "Executive Dashboard" page; reads strategic notes |
 
-Each domain agent is autonomous — it owns its data pipeline and its own database tables. The **Executive Agent** does not own primary data; it reads the outputs (snapshots) of the other three agents and performs **synthesis, prioritization, and strategic advising** rather than tactical work.
-
-> **No API Gateway in prototype:** Agents are called directly from the orchestrator without an intermediate gateway layer. Auth, rate-limiting, and routing will be added in a later production phase.
+Each domain agent is autonomous — it owns its data pipeline, its own database tables, and exposes a REST API. The **Executive Agent** does not own primary data; it aggregates outputs from the other three agents (via their APIs or a shared analytics store) to generate cross-functional KPIs and decision-support recommendations. **Notion is treated as a downstream/collaborative surface** — agents write human-readable summaries there for non-technical stakeholders, while the relational DB remains the system of record.
 
 ---
 
@@ -26,44 +22,67 @@ Each domain agent is autonomous — it owns its data pipeline and its own databa
 ```mermaid
 flowchart TB
     subgraph Client["Client Layer"]
-        UI[Next.js Chatbot UI<br/>run locally]
+        UI[Web Dashboard / Chat UI]
     end
 
-    subgraph Agents["Agent Layer (called directly — no gateway)"]
-        HR[HR Agent<br/>Recruitment & Resume Screening<br/>Retrieval-Augmented]
-        IT[IT Agent<br/>Incident Resolution & RCA<br/>Dual-audience output]
+    subgraph Gateway["API Gateway"]
+        GW[Auth · Routing · Rate Limiting]
+    end
+
+    subgraph Agents["Agent Layer"]
+        HR[HR Agent<br/>Recruitment & Resume Screening]
+        IT[IT Agent<br/>Incident Resolution & RCA]
         SALES[Sales Agent<br/>Proposals & Customer Insights]
-        EXEC[Executive Agent<br/>KPI Dashboard & Decision Support<br/>Synthesis / Prioritization / Advising]
+        EXEC[Executive Agent<br/>KPI Dashboard & Decision Support]
     end
 
-    subgraph Orch["Orchestration"]
+    subgraph LLM["LLM / Orchestration"]
         ORCH[Agent Orchestrator]
-        GROQ[Groq API<br/>llama-3.3-70b-versatile / mixtral-8x7b]
+        MODEL[LLM Provider]
+    end
+
+    subgraph MCP["MCP Layer"]
+        MCPCLIENT[MCP Client / Tool Registry]
+        NOTION[Notion MCP Server]
     end
 
     subgraph Data["Data Layer"]
-        HRDB[(HR DB<br/>Jobs · Candidates)]
-        ITDB[(IT DB<br/>Tickets · RCA Reports)]
-        SALESDB[(Sales DB<br/>Leads · Proposals · Insights)]
-        ANALYTICS[(Analytics / KPI Warehouse<br/>KPI_SNAPSHOTS)]
-        VSTORE[(Vector Store<br/>JDs · Resumes · Tickets · CRM Transcripts)]
+        HRDB[(HR DB)]
+        ITDB[(IT DB)]
+        SALESDB[(Sales DB)]
+        ANALYTICS[(Analytics / KPI Warehouse)]
+        VSTORE[(Vector Store<br/>Resumes · Tickets · Transcripts)]
     end
 
-    UI --> HR & IT & SALES & EXEC
+    subgraph Ext["External Integrations"]
+        ATS[ATS / Job Boards]
+        ITSM[ITSM / Monitoring Tools]
+        CRM[CRM System]
+        NOTIONWS[(Notion Workspace<br/>Candidates · Incidents · Proposals · Dashboard)]
+    end
+
+    UI --> GW
+    GW --> HR & IT & SALES & EXEC
     HR --> ORCH
     IT --> ORCH
     SALES --> ORCH
     EXEC --> ORCH
-    ORCH --> GROQ
+    ORCH --> MODEL
+    ORCH --> MCPCLIENT
+    MCPCLIENT --> NOTION
+    NOTION -.read/write.-> NOTIONWS
 
     HR --> HRDB
     HR --> VSTORE
+    HR -.pull.-> ATS
 
     IT --> ITDB
     IT --> VSTORE
+    IT -.pull.-> ITSM
 
     SALES --> SALESDB
     SALES --> VSTORE
+    SALES -.pull.-> CRM
 
     HRDB --> ANALYTICS
     ITDB --> ANALYTICS
@@ -71,230 +90,177 @@ flowchart TB
     EXEC --> ANALYTICS
 ```
 
-> **Future (Production) Architecture:** An API Gateway layer (auth · routing · rate limiting) will be introduced between the Client and Agent layers once the prototype is validated.
-
 **Key design principles**
-- **Loose coupling:** Each agent is independently deployable with its own database schema.
+- **Loose coupling:** Each agent is independently deployable with its own database schema and API surface.
 - **Shared orchestration:** All agents route LLM calls through a common orchestrator so prompts, model versions, and tool-use policies stay consistent.
-- **Groq as the brain:** The orchestrator uses the Groq API for fast, low-latency inference powering all agent reasoning.
-- **Single source of truth for KPIs:** The Executive Agent never writes to another agent's database — it only reads aggregated/derived data (snapshots) from the Analytics Warehouse.
-- **Vector store reuse:** Job descriptions, resumes, ticket logs, and CRM transcripts are embedded once and reused for both retrieval and semantic analysis.
+- **Single source of truth for KPIs:** The Executive Agent never writes to another agent's database — it only reads aggregated/derived data from the Analytics Warehouse.
+- **Vector store reuse:** Resumes, ticket logs, and CRM transcripts are embedded once and reused for both search (screening/triage) and semantic analysis (skills matching, RCA similarity, sentiment).
+- **Notion as a collaboration surface, not a system of record:** The relational DB (Section 7) stays authoritative. Notion MCP writes are best-effort, idempotent syncs keyed by the same domain IDs (`candidate_id`, `ticket_id`, `proposal_id`, `snapshot_id`) so a page can always be re-synced or reconciled without creating duplicates.
+- **MCP as a shared tool, not per-agent glue code:** The Notion MCP server is registered once in the orchestrator's tool registry (`orchestrator/tools/notion_tool.py`) and exposed to any agent that needs it, the same way `embedding_tool` and `scoring_tool` are shared today.
 
 ---
 
 ## 3. How Requests Move Through The System
 
-### 3.1 General request lifecycle — Prototype (direct routing)
+### 3.1 General request lifecycle (applies to all agents)
 
 ```mermaid
 sequenceDiagram
-    participant U as User (Chatbot UI)
+    participant U as User / Caller
+    participant GW as API Gateway
     participant AG as Domain Agent (HR/IT/Sales/Exec)
     participant OR as Orchestrator
-    participant GQ as Groq API
+    participant LLM as LLM Provider
     participant DB as Domain Database
+    participant MCP as Notion MCP Server
 
-    U->>AG: Send request (direct call, no gateway)
-    AG->>DB: Fetch context (JD, tickets, CRM records, snapshots)
-    AG->>OR: Build prompt + attach retrieved context
-    OR->>GQ: Send completion / tool-use request
-    GQ-->>OR: Structured response (JSON)
+    U->>GW: POST /api/v1/{agent}/{action}
+    GW->>GW: Authenticate + validate payload
+    GW->>AG: Forward request
+    AG->>DB: Fetch context (existing records)
+    AG->>OR: Build prompt + attach context/tools
+    OR->>LLM: Send completion/tool-use request
+    LLM-->>OR: Structured response (JSON)
     OR-->>AG: Parsed result
-    AG->>DB: Persist result
-    AG-->>U: Response payload
+    AG->>DB: Persist result (scores, report, proposal, etc.)
+    opt Notion sync enabled for this agent/action
+        AG->>OR: Request Notion sync (record + template)
+        OR->>MCP: Call Notion MCP tool (create/update page or DB row)
+        MCP-->>OR: Page ID / URL
+        OR-->>AG: Notion page reference
+        AG->>DB: Store notion_page_id against the record
+    end
+    AG-->>GW: Response payload (includes notion_url if synced)
+    GW-->>U: 200 OK + JSON body
 ```
 
-> **Note:** In the production version, an API Gateway will sit between the User and the Agent layer, handling authentication, payload validation, and routing.
+The Notion sync step is **opt-in per action** (controlled by a `sync_to_notion: true/false` flag or agent-level config) and always runs **after** the domain DB write succeeds, so the relational DB is never left inconsistent if the Notion MCP call fails. Failures are logged and retried by a background job rather than blocking the API response.
 
-### 3.2 HR Agent — Retrieval-Augmented Resume Screening
-
-The HR Agent evolves from a passive processor into a **Retrieval-Augmented Agent**. Rather than scoring a resume in isolation, it performs a **dual-lookup**: fetching the full Job Description (JD) from the database and comparing it directly against the candidate's resume text.
+### 3.2 Example: Resume Screening flow (HR Agent)
 
 ```mermaid
 flowchart LR
-    A[Candidate Resume Submitted] --> B[Fetch Full JD by job_id]
-    B --> C[Retrieve Resume Text]
-    C --> D[Dual-Lookup Comparison<br/>JD vs Resume]
-    D --> E[Skill/Experience/Soft-Skill Match Scoring]
+    A[Raw Resume Upload] --> B[Text/PDF Parsing]
+    B --> C[Skill & Experience Extraction]
+    C --> D[Embedding Generation]
+    D --> E[Score Against Job Requirements]
     E --> F{Score >= Threshold?}
     F -->|Yes| G[Add to Shortlist]
     F -->|No| H[Archive as Not Fit]
     G --> I[Notify Hiring Manager]
+    G --> J[Sync to Notion Candidates DB via MCP]
 ```
 
-### 3.3 IT Agent — Incident → Root Cause Analysis (Dual-Audience Output)
-
-The IT Agent ingests raw monitoring "signal" (logs, system context, historical incident data) and must produce output that serves **two audiences at once**: a technical diagnostic for the Ops team and an impact metric for Executives.
+### 3.3 Example: Incident → RCA flow (IT Agent)
 
 ```mermaid
 flowchart LR
-    A[Incoming Incident:<br/>raw_logs + system_context] --> B[Correlate Against historical_data_context]
-    B --> C[Root Cause Identification]
+    A[Incoming Ticket / Log Alert] --> B[Triage & Severity Classification]
+    B --> C[Pattern Match Against Known Issues]
     C --> D{Auto-remediable?}
-    D -->|Yes| E[Suggest Fix/Command<br/>e.g. ALTER TABLE...]
+    D -->|Yes| E[Execute Runbook / Auto-fix]
     D -->|No| F[Escalate to Engineer]
-    E --> G[Structured Report:<br/>Incident Details + Root Cause + Auto-Remediation]
+    E --> G[Root Cause Report]
     F --> G
     G --> H[Store in Incident Knowledge Base]
+    G --> I[Push RCA Report to Notion Incidents DB via MCP]
 ```
 
-### 3.4 Sales Agent — Proposal Generation & Customer Insights
+### 3.4 Example: Executive aggregation flow
 
 ```mermaid
 flowchart LR
-    A[Client Profile:<br/>pain_points, budget, past interactions] --> B[Customer Insight Analysis<br/>sentiment / needs / urgency]
-    B --> C[Match company_offering to pain_points]
-    C --> D[Draft Personalized Proposal]
-    D --> E[Pricing/Scope Recommendation]
-    E --> F[Deliver to Sales Rep]
+    A[HR Metrics: Time-to-Hire, Pipeline] --> D[KPI Synthesis Engine]
+    B[IT Metrics: MTTR, Ticket Volume] --> D
+    C[Sales Metrics: Pipeline Value, Win Rate] --> D
+    D --> E[Trend & Anomaly Detection]
+    E --> F[Dashboard Widgets]
+    E --> G[Decision-Support Recommendations]
+    E --> H[Publish Snapshot to Notion Executive Dashboard via MCP]
 ```
 
-### 3.5 Executive Agent — Synthesis, Prioritization & Strategic Advising
-
-Unlike the domain agents, the Executive Agent does not do tactical work — it **synthesizes** snapshots from HR, IT, and Sales, **prioritizes** what's urgent, and **advises** leadership on strategic questions.
+### 3.5 New: Notion MCP sync flow (shared across agents)
 
 ```mermaid
-flowchart LR
-    A[hr_snapshot:<br/>Recruitment Velocity, Shortlist size] --> D[Synthesis Engine]
-    B[it_snapshot:<br/>MTTR, Active Incidents, System Health] --> D
-    C[sales_snapshot:<br/>Pipeline Value, Conversion Probability] --> D
-    E[leadership_query] --> D
-    D --> F[KPI Dashboard]
-    D --> G[Executive Summary]
-    D --> H[Decision Support / What-If Scenarios]
-    D --> I[Risk Flags]
+sequenceDiagram
+    participant AG as Domain Agent
+    participant OR as Orchestrator
+    participant TOOL as notion_tool.py
+    participant MCP as Notion MCP Server
+    participant NOTION as Notion Workspace
+
+    AG->>OR: sync_to_notion(record, template_name)
+    OR->>TOOL: build_notion_payload(record, template_name)
+    TOOL->>MCP: call tool (e.g. notion.create_page / notion.update_database_item)
+    MCP->>NOTION: Create/Update page or DB row
+    NOTION-->>MCP: page_id, url
+    MCP-->>TOOL: Result
+    TOOL-->>OR: { page_id, url, status }
+    OR-->>AG: Notion reference to persist alongside domain record
 ```
+
+**Idempotency rule:** every sync call looks up `notion_page_id` on the domain record first. If present, it issues an *update*; if absent, it issues a *create* and stores the returned `page_id`. This prevents duplicate pages when a record is re-processed (e.g., a resume re-screened, an RCA report regenerated).
+
+### 3.6 Confirmed Notion schema: HR Agent → "Job Descriptions" database
+
+The HR Agent's `JOBS` table is already synced against a live Notion database. This is the real, provisioned schema (not a placeholder) — `orchestrator/tools/notion_tool.py` and `agents/hr_agent/notion_templates/job_description_page.md` must map to these exact property names and types.
+
+| Notion Property | Type | Maps From (`JOBS` table) | Notes |
+|---|---|---|---|
+| `job_id` | Title (text) | `job_id` | Primary key / page title, e.g. `DE-2026-001` |
+| `job_title` | Text | `title` | e.g. "Data Engineer" |
+| `department` | Select | `department` | e.g. "Engineering" — must match an existing Select option or be created via the MCP tool |
+| `full_jd_text` | Text | `requirements` | Full job description body (role, responsibilities, requirements) |
+| `created_at` | Date | `created_at` | Date only, no time component in the current view |
+
+There's also an `OPEN`/status tag visible in the Notion table (next to `job_id`) — this is a status property (e.g. `status`: Open/Closed/On Hold) not currently represented in `JOBS`. Recommend adding a `status` column to `JOBS` (Section 7) so it can round-trip both ways instead of being Notion-only.
+
+**Sync direction:** job requisitions can be created from either side —
+- **App → Notion:** `POST /api/v1/hr/jobs` creates the row in `JOBS`, then syncs to Notion via `notion_tool.py` (create if no `notion_page_id`, else update).
+- **Notion → App (optional, future):** a polling or webhook-based pull from the Notion MCP server could ingest new/edited rows in "Job Descriptions" back into `JOBS`, letting recruiters author JDs directly in Notion. Not yet implemented — see Next Steps.
 
 ---
 
-## 4. Agent Input / Output Contracts
-
-This section defines the exact shape of data flowing into and out of each agent — the contract the orchestrator and downstream consumers rely on.
-
-### 4.1 HR Agent
-
-**Input structure** — the dictionary passed into the HR node performs a dual-lookup: the full JD text and the full resume text are both supplied so the agent compares them directly rather than scoring the resume in isolation.
-
-```python
-# The input dictionary passed into the hr_node
-input_package = {
-    "job_id": "DE-2026-001",
-    "full_jd_text": """[...The entire 2-page document containing roles, responsibilities,
-    required tech stack, experience, and soft skills...]""",
-    "resume_text": "[...The full text of the applicant's resume...]"
-}
-```
-
-**Output structure**
-
-| Field | Description |
-|---|---|
-| `candidate_id` | Unique identifier for the candidate |
-| `job_id` | The JD this candidate was scored against |
-| `match_score` | Overall fit score (0–100) derived from JD vs. resume comparison |
-| `skill_matches` | Skills present in both JD and resume |
-| `missing_skills` | Skills required by the JD but absent from the resume |
-| `recommendation` | `shortlist` / `hold` / `reject` |
-| `summary` | Natural-language rationale grounded in the JD comparison |
-
-### 4.2 IT Agent
-
-**Input structure** — the IT Agent needs to see the "signal" from monitoring systems, plus historical context so it can correlate incidents against past resolutions.
-
-```json
-{
-  "incident_id": "INC-2026-07-10-098",
-  "raw_logs": "ERROR: [auth-svc] connection timeout at 08:00:15... [Database] latency spikes > 500ms detected.",
-  "system_context": "Production environment, High Traffic period.",
-  "historical_data_context": "Similar incident occurred on May 12th; solved by database index optimization."
-}
-```
-
-**Output structure — dual-audience report.** To serve two masters, the output is structured to provide a **Technical Diagnostic** (for Ops) and an **Impact Metric** (for Executives).
-
-| Section | Target Audience | Content |
-|---|---|---|
-| **Incident Details** | Ops Team | Severity, timestamp, affected services |
-| **Root Cause** | Ops Team | The specific technical trigger (e.g., "Missing index on `user_sessions` table") |
-| **Auto-Remediation** | Ops Team | Suggested command/script to fix (e.g., `ALTER TABLE...`) |
-| **Impact Metric** | Executives | Business-facing severity/impact summary (e.g., "Checkout downtime, ~$4,200/min revenue at risk") feeding the `it_snapshot` consumed by the Executive Agent |
-
-### 4.3 Sales Agent
-
-**Input structure**
-
-```json
-{
-  "client_name": "NovaTech Solutions",
-  "industry": "FinTech",
-  "pain_points": ["High server latency", "Outdated security protocols"],
-  "budget": "INR 15,00,000",
-  "previous_interactions": "Initial discovery call conducted on July 5th, client expressed interest in scalable cloud infra.",
-  "company_offering": "Managed AWS/OCI migration services with AI-driven monitoring."
-}
-```
-
-**Output structure**
-
-| Field | Description |
-|---|---|
-| `proposal_id` | Unique identifier for the generated proposal |
-| `customer_insight` | Sentiment/needs analysis derived from `pain_points` and `previous_interactions` |
-| `pricing_tier` / `estimated_value` | Recommended pricing aligned to `budget` |
-| `key_points` | How `company_offering` addresses each pain point |
-| `proposal_document_url` | Link to the generated proposal document |
-| Primary consumers | Sales Reps (for outreach), Executive Agent (for `sales_snapshot`: pipeline value, conversion probability) |
-
-### 4.4 Executive Agent
-
-**Input structure** — the Executive Agent consumes structured snapshots from the three domain agents alongside a natural-language leadership question, rather than raw operational data.
-
-```json
-{
-  "system_context": {
-    "timestamp": "2026-07-10T11:20:15Z",
-    "hr_snapshot": { "_comment": "Output from HR Agent: Recruitment Velocity, Shortlist size" },
-    "it_snapshot": { "_comment": "Output from IT Agent: MTTR, Active Incidents, System Health" },
-    "sales_snapshot": { "_comment": "Output from Sales Agent: Pipeline Value, Conversion Probability" }
-  },
-  "leadership_query": "What is the primary risk to our quarterly revenue goal based on current operations?"
-}
-```
-
-**Output structure**
-
-| Output Component | Format | Description |
-|---|---|---|
-| **KPI Dashboard** | JSON / UI-ready | A collection of 3–5 "North Star" metrics (e.g., Overall Health Score, Revenue at Risk, Resource Utilization %) |
-| **Executive Summary** | Markdown text | A 3-sentence summary of the company's current status |
-| **Decision Support** | Bullet points | A list of "what if" scenarios or recommended actions (e.g., "If we delay recruitment, we risk a 15% drop in project delivery") |
-| **Risk Flags** | JSON array | Urgent items requiring immediate attention (e.g., IT outages or deal stalls) |
-
----
-
-## 5. Project Structure
+## 4. Project Structure
 
 ```
 enterprise-agent-system/
 ├── README.md
-├── .env.example
+├── docker-compose.yml
+├── .env.example                  # includes NOTION_MCP_URL / NOTION_INTEGRATION_TOKEN
+│
+├── gateway/
+│   ├── main.py                  # API gateway entrypoint, auth, routing
+│   ├── middleware/
+│   │   ├── auth.py
+│   │   └── rate_limit.py
+│   └── routes/
+│       ├── hr_routes.py
+│       ├── it_routes.py
+│       ├── sales_routes.py
+│       └── executive_routes.py
 │
 ├── agents/
 │   ├── hr_agent/
 │   │   ├── __init__.py
-│   │   ├── service.py            # Retrieval-augmented Recruitment + Resume Screening
+│   │   ├── service.py            # Recruitment + Resume Screening logic
 │   │   ├── prompts/
 │   │   │   ├── resume_screening.md
 │   │   │   └── job_matching.md
+│   │   ├── notion_templates/
+│   │   │   ├── job_description_page.md  # maps JOBS fields -> "Job Descriptions" Notion DB (job_id, job_title, department, full_jd_text, created_at)
+│   │   │   └── candidate_page.md # maps CANDIDATES fields -> Notion DB properties
 │   │   ├── models.py              # Pydantic/ORM schemas
 │   │   └── db.py
 │   │
 │   ├── it_agent/
 │   │   ├── __init__.py
-│   │   ├── service.py            # Incident Resolution + RCA logic (dual-audience output)
+│   │   ├── service.py            # Incident Resolution + RCA logic
 │   │   ├── prompts/
 │   │   │   ├── triage.md
 │   │   │   └── root_cause_analysis.md
+│   │   ├── notion_templates/
+│   │   │   └── rca_report.md     # maps RCA_REPORTS fields -> Notion DB properties
 │   │   ├── models.py
 │   │   └── db.py
 │   │
@@ -304,14 +270,18 @@ enterprise-agent-system/
 │   │   ├── prompts/
 │   │   │   ├── proposal_draft.md
 │   │   │   └── sentiment_needs_analysis.md
+│   │   ├── notion_templates/
+│   │   │   └── proposal_page.md  # maps PROPOSALS fields -> Notion page blocks
 │   │   ├── models.py
 │   │   └── db.py
 │   │
 │   └── executive_agent/
 │       ├── __init__.py
-│       ├── service.py            # Synthesis, prioritization, strategic advising
+│       ├── service.py            # KPI aggregation + Decision Support
 │       ├── prompts/
 │       │   └── strategic_summary.md
+│       ├── notion_templates/
+│       │   └── dashboard_snapshot.md  # maps KPI_SNAPSHOTS -> Notion dashboard page
 │       ├── models.py
 │       └── db.py
 │
@@ -319,8 +289,13 @@ enterprise-agent-system/
 │   ├── orchestrator.py           # Shared LLM call handler, tool registry
 │   ├── tools/
 │   │   ├── embedding_tool.py
-│   │   └── scoring_tool.py
-│   └── groq_client.py            # Groq API client (brain model calls)
+│   │   ├── scoring_tool.py
+│   │   └── notion_tool.py        # NEW: wraps Notion MCP client, builds payloads, idempotency logic
+│   └── llm_client.py
+│
+├── mcp/
+│   ├── notion_mcp_client.py      # NEW: thin client around the Notion MCP server connection
+│   └── config.py                 # NEW: MCP server URL, auth, database/page ID mappings
 │
 ├── shared/
 │   ├── vector_store/
@@ -328,75 +303,111 @@ enterprise-agent-system/
 │   ├── analytics/
 │   │   └── warehouse.py          # ETL into KPI warehouse
 │   └── utils/
-│       ├── parsing.py            # JD/resume/log/document parsing helpers
+│       ├── parsing.py            # Resume/log/document parsing helpers
 │       └── logging.py
 │
 ├── db/
 │   ├── migrations/
-│   └── schema.sql                # Full DB schema (see Section 8)
-│
-├── chatbot_ui/                   # Vercel-hosted Next.js chatbot frontend
-│   ├── pages/
-│   ├── components/
-│   └── vercel.json
+│   └── schema.sql                # Full DB schema (see Section 7)
 │
 └── tests/
     ├── hr_agent/
     ├── it_agent/
     ├── sales_agent/
-    └── executive_agent/
+    ├── executive_agent/
+    └── mcp/
+        └── test_notion_sync.py   # NEW: idempotency + retry tests for Notion sync
 ```
 
-> **Removed from prototype:** `gateway/` directory (auth middleware, rate limiting, gateway routes) — to be added in the production phase.
-
 ---
 
-## 6. API Endpoints
+## 5. API Endpoints
 
-All endpoints are called directly from the chatbot UI or orchestrator (no gateway in prototype). Versioning is maintained for forward compatibility.
+All endpoints are versioned under `/api/v1` and routed through the API Gateway. Each domain's mutating endpoints now accept an optional `sync_to_notion` flag, and each domain exposes a dedicated sync endpoint for manual/backfill syncs.
 
-### 6.1 HR Agent
+### 5.1 HR Agent
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/hr/jobs` | Create a new job requisition (stores `full_jd_text`) |
+| `POST` | `/api/v1/hr/jobs` | Create a new job requisition (`sync_to_notion` optional — writes to the "Job Descriptions" Notion DB) |
 | `POST` | `/api/v1/hr/resumes/upload` | Upload and parse a raw resume |
-| `POST` | `/api/v1/hr/resumes/screen` | Dual-lookup screening: fetch JD by `job_id`, compare against `resume_text` |
+| `POST` | `/api/v1/hr/resumes/screen` | Screen a resume against a job's requirements (`sync_to_notion` optional) |
 | `GET` | `/api/v1/hr/candidates/shortlist?job_id=` | Retrieve ranked shortlist for a job |
 | `GET` | `/api/v1/hr/candidates/{candidate_id}` | Get candidate detail + score breakdown |
+| `POST` | `/api/v1/hr/candidates/{candidate_id}/sync-notion` | **NEW:** Force (re)sync a candidate to the Notion Candidates DB |
+| `POST` | `/api/v1/hr/jobs/{job_id}/sync-notion` | **NEW:** Force (re)sync a job requisition to the Notion "Job Descriptions" DB |
 
-### 6.2 IT Agent
-
-| Method | Endpoint | Description |
-|---|---|---|
-| `POST` | `/api/v1/it/incidents` | Submit a new incident (`raw_logs`, `system_context`) |
-| `POST` | `/api/v1/it/incidents/{incident_id}/triage` | Run triage/classification |
-| `POST` | `/api/v1/it/incidents/{incident_id}/rca` | Generate dual-audience RCA report (Incident Details / Root Cause / Auto-Remediation) |
-| `GET` | `/api/v1/it/incidents/{incident_id}` | Get incident status and resolution history |
-| `GET` | `/api/v1/it/incidents/known-issues` | List matched known-issue patterns from `historical_data_context` |
-
-### 6.3 Sales Agent
+### 5.2 IT Agent
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/sales/leads` | Ingest a new lead/client profile |
-| `POST` | `/api/v1/sales/insights` | Generate customer insight (sentiment/needs) from client profile |
-| `POST` | `/api/v1/sales/proposals/generate` | Generate a personalized proposal from `company_offering` + `pain_points` |
+| `POST` | `/api/v1/it/tickets` | Submit a new incident/ticket |
+| `POST` | `/api/v1/it/tickets/{ticket_id}/triage` | Run triage/classification on a ticket |
+| `POST` | `/api/v1/it/tickets/{ticket_id}/rca` | Generate root cause analysis report (`sync_to_notion` optional) |
+| `GET` | `/api/v1/it/tickets/{ticket_id}` | Get ticket status and resolution history |
+| `GET` | `/api/v1/it/incidents/known-issues` | List matched known-issue patterns |
+| `POST` | `/api/v1/it/tickets/{ticket_id}/sync-notion` | **NEW:** Force (re)sync an RCA report to the Notion Incidents DB |
+
+### 5.3 Sales Agent
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/sales/leads` | Ingest a new lead/CRM record |
+| `POST` | `/api/v1/sales/insights/{lead_id}` | Generate customer insight (sentiment/needs) |
+| `POST` | `/api/v1/sales/proposals/generate` | Generate a personalized proposal (`sync_to_notion` optional) |
 | `GET` | `/api/v1/sales/proposals/{proposal_id}` | Retrieve a generated proposal |
+| `POST` | `/api/v1/sales/proposals/{proposal_id}/sync-notion` | **NEW:** Force (re)publish a proposal as a Notion page |
 
-### 6.4 Executive Agent
+### 5.4 Executive Agent
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `GET` | `/api/v1/executive/kpis?range=` | Retrieve the KPI Dashboard (North Star metrics) |
+| `GET` | `/api/v1/executive/kpis?range=` | Retrieve aggregated KPI dashboard data |
 | `GET` | `/api/v1/executive/trends?metric=` | Get trend/time-series data for a metric |
-| `POST` | `/api/v1/executive/decision-support` | Submit `system_context` + `leadership_query`, receive Executive Summary, Decision Support, and Risk Flags |
+| `POST` | `/api/v1/executive/decision-support` | Get a recommendation for a strategic question |
+| `POST` | `/api/v1/executive/kpis/sync-notion` | **NEW:** Push the latest KPI snapshot to the Notion Executive Dashboard page |
 
 ---
 
-## 7. Examples
+## 6. Examples
 
-### 7.1 HR Agent — Retrieval-Augmented Resume Screening
+### 6.1 HR Agent — Create Job Requisition (with Notion sync)
+
+**Request**
+```http
+POST /api/v1/hr/jobs
+Content-Type: application/json
+```
+```json
+{
+  "job_id": "DE-2026-001",
+  "title": "Data Engineer",
+  "department": "Engineering",
+  "requirements": "Role: Data Engineer\n\nResponsibilities:\n- Design, build, and maintain data pipelines...",
+  "status": "Open",
+  "sync_to_notion": true
+}
+```
+
+**Response**
+```json
+{
+  "job_id": "DE-2026-001",
+  "title": "Data Engineer",
+  "department": "Engineering",
+  "status": "Open",
+  "notion": {
+    "page_id": "3f2a1b9c-...",
+    "url": "https://notion.so/DE-2026-001-Data-Engineer-3f2a1b9c",
+    "database": "Job Descriptions"
+  },
+  "created_at": "2026-07-11T00:00:00Z"
+}
+```
+
+This maps directly onto the confirmed Notion columns: `job_id` → Title, `title` → `job_title`, `department` → `department` (Select), `requirements` → `full_jd_text`, `created_at` → `created_at`.
+
+### 6.2 HR Agent — Resume Screening (with Notion sync)
 
 **Request**
 ```http
@@ -405,9 +416,13 @@ Content-Type: application/json
 ```
 ```json
 {
-  "job_id": "DE-2026-001",
-  "full_jd_text": "[...The entire 2-page document containing roles, responsibilities, required tech stack, experience, and soft skills...]",
-  "resume_text": "[...The full text of the applicant's resume...]"
+  "job_id": "job_2031",
+  "candidate": {
+    "name": "Priya Sharma",
+    "resume_text": "5 years experience in backend development with Python, FastAPI, PostgreSQL...",
+    "resume_file_url": "s3://resumes/priya_sharma.pdf"
+  },
+  "sync_to_notion": true
 }
 ```
 
@@ -415,56 +430,58 @@ Content-Type: application/json
 ```json
 {
   "candidate_id": "cand_8841",
-  "job_id": "DE-2026-001",
+  "job_id": "job_2031",
   "match_score": 87.5,
-  "skill_matches": ["Python", "Airflow", "PostgreSQL", "AWS Glue"],
+  "skill_matches": ["Python", "FastAPI", "PostgreSQL", "REST APIs"],
   "missing_skills": ["Kubernetes"],
   "recommendation": "shortlist",
-  "summary": "Strong data engineering background matching most of the JD's required tech stack; minor gap in container orchestration skills.",
+  "summary": "Strong backend engineering background with 5 years relevant experience; minor gap in container orchestration skills.",
+  "notion": {
+    "page_id": "a1b2c3d4-...",
+    "url": "https://notion.so/Priya-Sharma-cand_8841-a1b2c3d4"
+  },
   "created_at": "2026-07-10T09:12:00Z"
 }
 ```
 
-### 7.2 IT Agent — Root Cause Analysis (Dual-Audience)
+### 6.3 IT Agent — Root Cause Analysis (with Notion sync)
 
 **Request**
 ```http
-POST /api/v1/it/incidents/INC-2026-07-10-098/rca
+POST /api/v1/it/tickets/tkt_5521/rca
 Content-Type: application/json
 ```
 ```json
 {
-  "incident_id": "INC-2026-07-10-098",
-  "raw_logs": "ERROR: [auth-svc] connection timeout at 08:00:15... [Database] latency spikes > 500ms detected.",
-  "system_context": "Production environment, High Traffic period.",
-  "historical_data_context": "Similar incident occurred on May 12th; solved by database index optimization."
+  "ticket_id": "tkt_5521",
+  "logs": [
+    "2026-07-10T02:14:00Z ERROR db_connection_pool: timeout after 30s",
+    "2026-07-10T02:14:05Z WARN api_gateway: 503 upstream unavailable"
+  ],
+  "affected_service": "checkout-service",
+  "sync_to_notion": true
 }
 ```
 
 **Response**
 ```json
 {
-  "incident_id": "INC-2026-07-10-098",
-  "incident_details": {
-    "severity": "high",
-    "timestamp": "2026-07-10T08:00:15Z",
-    "affected_services": ["auth-svc", "database"]
+  "ticket_id": "tkt_5521",
+  "severity": "high",
+  "root_cause": "Database connection pool exhaustion caused by an unclosed transaction leak in the checkout-service payment handler.",
+  "matched_known_issue": "KI-0092",
+  "recommended_fix": "Apply patch to close DB sessions in payment_handler.py; increase pool size as a short-term mitigation.",
+  "auto_remediated": false,
+  "escalated_to": "backend-oncall",
+  "notion": {
+    "page_id": "e5f6a7b8-...",
+    "url": "https://notion.so/tkt_5521-RCA-e5f6a7b8"
   },
-  "root_cause": "Missing index on user_sessions table causing latency spikes under high traffic, mirroring the May 12th incident.",
-  "auto_remediation": {
-    "suggested_command": "ALTER TABLE user_sessions ADD INDEX idx_session_lookup (user_id, created_at);",
-    "auto_remediated": false,
-    "escalated_to": "backend-oncall"
-  },
-  "impact_metric": {
-    "business_summary": "Auth latency degrading login success rate; estimated ~$4,200/min revenue at risk during peak traffic.",
-    "matched_known_issue": "May 12th index optimization incident"
-  },
-  "generated_at": "2026-07-10T08:05:00Z"
+  "generated_at": "2026-07-10T02:20:00Z"
 }
 ```
 
-### 7.3 Sales Agent — Proposal Generation & Customer Insight
+### 6.4 Sales Agent — Proposal Generation (with Notion sync)
 
 **Request**
 ```http
@@ -473,12 +490,12 @@ Content-Type: application/json
 ```
 ```json
 {
-  "client_name": "NovaTech Solutions",
-  "industry": "FinTech",
-  "pain_points": ["High server latency", "Outdated security protocols"],
-  "budget": "INR 15,00,000",
-  "previous_interactions": "Initial discovery call conducted on July 5th, client expressed interest in scalable cloud infra.",
-  "company_offering": "Managed AWS/OCI migration services with AI-driven monitoring."
+  "lead_id": "lead_3390",
+  "customer_name": "Northwind Traders",
+  "needs_summary": "Looking to automate inventory reporting across 12 warehouses.",
+  "budget_range": "50000-75000",
+  "product_line": "Enterprise Analytics Suite",
+  "sync_to_notion": true
 }
 ```
 
@@ -486,72 +503,77 @@ Content-Type: application/json
 ```json
 {
   "proposal_id": "prop_1187",
-  "client_name": "NovaTech Solutions",
-  "customer_insight": {
-    "sentiment": "interested, cost-conscious",
-    "key_needs": ["Reduce server latency", "Modernize security compliance", "Scalable cloud infrastructure"],
-    "urgency": "medium"
-  },
-  "pricing_tier": "Growth",
-  "estimated_value": 1450000,
-  "key_points": [
-    "Managed AWS/OCI migration addressing current latency bottlenecks",
-    "AI-driven monitoring to proactively flag security/performance issues",
-    "Phased migration to fit within INR 15,00,000 budget"
-  ],
+  "lead_id": "lead_3390",
+  "pricing_tier": "Enterprise",
+  "estimated_value": 68000,
   "proposal_document_url": "s3://proposals/prop_1187.pdf",
+  "key_points": [
+    "Automated multi-warehouse inventory dashboards",
+    "Real-time anomaly alerts",
+    "12-week implementation timeline"
+  ],
+  "notion": {
+    "page_id": "9c8d7e6f-...",
+    "url": "https://notion.so/Northwind-Traders-Proposal-9c8d7e6f"
+  },
   "generated_at": "2026-07-10T10:05:00Z"
 }
 ```
 
-### 7.4 Executive Agent — Synthesis & Decision Support
+### 6.5 Executive Agent — KPI Dashboard (with Notion sync)
 
 **Request**
 ```http
-POST /api/v1/executive/decision-support
-Content-Type: application/json
-```
-```json
-{
-  "system_context": {
-    "timestamp": "2026-07-10T11:20:15Z",
-    "hr_snapshot": { "recruitment_velocity_days": 21, "shortlist_size": 8 },
-    "it_snapshot": { "mttr_minutes": 47, "active_incidents": 3, "system_health_score": 0.82 },
-    "sales_snapshot": { "pipeline_value": 12400000, "conversion_probability": 0.31 }
-  },
-  "leadership_query": "What is the primary risk to our quarterly revenue goal based on current operations?"
-}
+GET /api/v1/executive/kpis?range=last_30_days
 ```
 
 **Response**
 ```json
 {
-  "kpi_dashboard": {
-    "overall_health_score": 78,
-    "revenue_at_risk": 4300000,
-    "resource_utilization_pct": 74,
-    "recruitment_velocity_days": 21,
-    "active_incidents": 3
+  "range": "last_30_days",
+  "hr": {
+    "open_positions": 14,
+    "avg_time_to_hire_days": 21,
+    "shortlist_rate": 0.34
   },
-  "executive_summary": "Operations are broadly healthy, but 3 active IT incidents are elevating churn risk for FinTech accounts. Sales pipeline remains strong at ₹1.24Cr with a 31% conversion rate. Delayed recruitment could constrain delivery capacity next quarter.",
-  "decision_support": [
-    "If active incidents aren't resolved within 48 hours, expect a 10-12% dip in customer satisfaction scores for affected accounts.",
-    "If recruitment for the DE-2026-001 role slips further, project delivery could drop by 15% next quarter.",
-    "Reallocating one IT engineer to the checkout-service incident would likely reduce MTTR by ~20 minutes."
-  ],
-  "risk_flags": [
-    { "type": "it_outage", "severity": "high", "description": "3 active incidents in production during high-traffic period" },
-    { "type": "deal_stall", "severity": "medium", "description": "NovaTech proposal pending decision past 5 business days" }
-  ],
-  "generated_at": "2026-07-10T11:21:00Z"
+  "it": {
+    "tickets_resolved": 402,
+    "avg_mttr_minutes": 47,
+    "auto_remediation_rate": 0.28
+  },
+  "sales": {
+    "proposals_generated": 56,
+    "pipeline_value": 1240000,
+    "win_rate": 0.31
+  },
+  "notion_dashboard_url": "https://notion.so/Executive-Dashboard-last-30-days",
+  "generated_at": "2026-07-10T11:00:00Z"
+}
+```
+
+### 6.6 Manual Notion sync (any agent)
+
+**Request**
+```http
+POST /api/v1/it/tickets/tkt_5521/sync-notion
+```
+
+**Response**
+```json
+{
+  "ticket_id": "tkt_5521",
+  "notion_page_id": "e5f6a7b8-...",
+  "action": "updated",
+  "url": "https://notion.so/tkt_5521-RCA-e5f6a7b8",
+  "synced_at": "2026-07-10T12:30:00Z"
 }
 ```
 
 ---
 
-## 8. Database Structure
+## 7. Database Structure
 
-Each domain agent owns its own schema; the Executive Agent reads from a derived **Analytics Warehouse** rather than the source tables directly.
+Each domain agent owns its own schema; the Executive Agent reads from a derived **Analytics Warehouse** rather than the source tables directly. Notion is not a system of record — every synced entity carries a `notion_page_id` on its own table so the relational DB stays authoritative and re-syncs stay idempotent.
 
 ```mermaid
 erDiagram
@@ -560,7 +582,9 @@ erDiagram
         string job_id PK
         string title
         string department
-        text full_jd_text
+        text requirements
+        string status
+        string notion_page_id
         timestamp created_at
     }
     CANDIDATES {
@@ -569,29 +593,26 @@ erDiagram
         string name
         text resume_text
         float match_score
-        json skill_matches
-        json missing_skills
         string recommendation
+        string notion_page_id
         timestamp created_at
     }
 
-    INCIDENTS ||--o{ RCA_REPORTS : "generates"
-    INCIDENTS {
-        string incident_id PK
-        text raw_logs
-        string system_context
+    TICKETS ||--o{ RCA_REPORTS : "generates"
+    TICKETS {
+        string ticket_id PK
+        string affected_service
         string severity
         string status
         timestamp created_at
     }
     RCA_REPORTS {
         string report_id PK
-        string incident_id FK
+        string ticket_id FK
         text root_cause
-        text auto_remediation_command
-        boolean auto_remediated
-        text business_impact_summary
         string matched_known_issue
+        boolean auto_remediated
+        string notion_page_id
         timestamp generated_at
     }
 
@@ -599,11 +620,9 @@ erDiagram
     LEADS ||--o{ INSIGHTS : "generates"
     LEADS {
         string lead_id PK
-        string client_name
-        string industry
-        json pain_points
-        string budget
-        text previous_interactions
+        string customer_name
+        text needs_summary
+        string budget_range
         timestamp created_at
     }
     PROPOSALS {
@@ -611,16 +630,15 @@ erDiagram
         string lead_id FK
         string pricing_tier
         float estimated_value
-        json key_points
         string document_url
+        string notion_page_id
         timestamp generated_at
     }
     INSIGHTS {
         string insight_id PK
         string lead_id FK
         string sentiment
-        json key_needs
-        string urgency
+        text key_needs
         timestamp generated_at
     }
 
@@ -630,84 +648,58 @@ erDiagram
         string metric_name
         float metric_value
         date snapshot_date
+        string notion_page_id
     }
 
-    DECISION_SUPPORT_LOGS {
-        string log_id PK
-        text leadership_query
-        json hr_snapshot
-        json it_snapshot
-        json sales_snapshot
-        text executive_summary
-        json decision_support
-        json risk_flags
-        timestamp generated_at
+    NOTION_SYNC_LOG {
+        string sync_id PK
+        string entity_type
+        string entity_id
+        string notion_page_id
+        string action
+        string status
+        text error_message
+        timestamp synced_at
     }
 ```
 
 **Notes**
-- `KPI_SNAPSHOTS` is populated by a periodic ETL job that reads from `CANDIDATES`, `INCIDENTS`, `RCA_REPORTS`, `LEADS`, and `PROPOSALS`, aggregating them into standard metrics (recruitment velocity, MTTR, win rate, etc.).
-- `DECISION_SUPPORT_LOGS` captures every Executive Agent synthesis call — the snapshots it received, the leadership query, and its recommendations — for auditability.
-- The Executive Agent's `/kpis` and `/decision-support` endpoints query `KPI_SNAPSHOTS` and the domain agents' snapshot outputs exclusively — it never has write access to other agents' source tables, preserving domain ownership boundaries.
-- Vector embeddings (JDs, resumes, incident logs, CRM transcripts) are stored separately in a vector store, keyed by the same IDs (`job_id`/`candidate_id`, `incident_id`, `lead_id`) for cross-referencing.
+- `KPI_SNAPSHOTS` is populated by a periodic ETL job that reads from `CANDIDATES`, `TICKETS`, `RCA_REPORTS`, `LEADS`, and `PROPOSALS`, aggregating them into standard metrics (time-to-hire, MTTR, win rate, etc.).
+- The Executive Agent's `/kpis` and `/trends` endpoints query `KPI_SNAPSHOTS` exclusively — it never has write access to other agents' tables, preserving domain ownership boundaries.
+- Vector embeddings (resumes, ticket logs, CRM transcripts) are stored separately in a vector store, keyed by the same IDs (`candidate_id`, `ticket_id`, `lead_id`) for cross-referencing.
+- **`notion_page_id`** columns (added to `JOBS`, `CANDIDATES`, `RCA_REPORTS`, `PROPOSALS`, `KPI_SNAPSHOTS`) let `notion_tool.py` decide create-vs-update on every sync call.
+- **`JOBS.status`** (new) mirrors the `OPEN` status tag already visible in the live Notion "Job Descriptions" table, so status changes can eventually round-trip in either direction (see Section 3.6).
+- **`NOTION_SYNC_LOG`** (new) is an audit/retry table: every MCP sync attempt (success or failure) is recorded here so failed syncs can be retried by a background worker without re-triggering the LLM call.
 
 ---
 
-## 9. Tech Stack
+## 8. Tech Stack Recommendation
 
-### Prototype (Current Phase)
-
-| Layer | Technology |
+| Layer | Suggested Technology |
 |---|---|
-| Chatbot UI | Next.js — run locally |
-| Agent Services | Python (FastAPI) |
-| LLM / Brain Model | Groq API (fast inference — e.g. `llama-3.3-70b-versatile` or `mixtral-8x7b`) |
-| LLM Orchestration | Custom orchestrator (`groq_client.py`) with tool-use for structured outputs |
+| API Gateway | FastAPI / Express.js + JWT auth |
+| Agent Services | Python (FastAPI) or Node.js microservices |
+| LLM Orchestration | Anthropic API (Claude) with tool-use for structured outputs |
+| MCP Integration | Notion MCP Server, registered as a shared tool in the orchestrator's tool registry |
 | Relational DB | PostgreSQL (one schema per agent) |
 | Vector Store | pgvector or a managed vector DB |
-| Analytics Warehouse | PostgreSQL materialized views |
-| Deployment | Fully local |
-
-### Production (Future Phase)
-
-| Layer | Technology |
-|---|---|
-| API Gateway | FastAPI / Express.js + JWT auth, rate limiting, routing |
-| Messaging (optional) | Kafka / RabbitMQ for async ticket/lead ingestion |
+| Analytics Warehouse | PostgreSQL materialized views or a lightweight OLAP store |
+| Collaboration Surface | Notion (Candidates, Incidents, Proposals, and Executive Dashboard workspaces), synced via MCP |
+| Messaging (optional) | Kafka/RabbitMQ for async ticket/lead ingestion, and for retrying failed Notion syncs |
 | Deployment | Docker Compose (dev) → Kubernetes (prod) |
 
 ---
 
-## 10. Environment Variables
+## 9. Next Steps
 
-```bash
-# Groq API — brain model
-GROQ_API_KEY=your_groq_api_key_here
-GROQ_MODEL=llama-3.3-70b-versatile        # or mixtral-8x7b, gemma2-9b-it, etc.
-
-# Database
-DATABASE_URL=postgresql://user:password@host:5432/enterprise_agents
-
-# Vector Store
-VECTOR_STORE_URL=...
-
-# (Future) Auth — not needed for prototype
-# JWT_SECRET=...
-```
-
----
-
-## 11. Next Steps (Prototype)
-
-1. Set up the Groq API client in `orchestrator/groq_client.py`.
-2. Scaffold the four agent services with the folder structure in Section 5.
-3. Implement the HR Agent's dual-lookup retrieval (JD fetch + resume comparison).
-4. Implement the IT Agent's dual-audience RCA output (technical diagnostic + impact metric).
-5. Implement the Sales Agent's customer-insight + proposal-generation pipeline.
-6. Implement the Executive Agent's synthesis logic consuming `hr_snapshot`, `it_snapshot`, and `sales_snapshot`.
-7. Define Pydantic/ORM models matching the schema in Section 8.
-8. Build and run the chatbot UI locally.
-9. Wire the ETL job that populates `KPI_SNAPSHOTS` for the Executive Agent.
-10. Write integration tests simulating the end-to-end flows in Section 3.
-
-**Production backlog:** Add API Gateway (auth, rate limiting, routing), Docker/Kubernetes deployment, and role-based access control once the prototype is validated.
+1. Scaffold the four agent services with the folder structure above.
+2. Define Pydantic/ORM models matching the schema in Section 7, including the new `notion_page_id` columns and `NOTION_SYNC_LOG` table.
+3. Implement the orchestrator with a shared prompt-template system per agent.
+4. Wire the ETL job that populates `KPI_SNAPSHOTS` for the Executive Agent.
+5. Add authentication and role-based access control at the gateway level.
+6. **Provision the Notion MCP server:** create a Notion internal integration, generate an integration token, and set `NOTION_MCP_URL` / `NOTION_INTEGRATION_TOKEN` in `.env`.
+7. **Create the remaining Notion workspace structure:** the "Job Descriptions" database already exists (schema confirmed in Section 3.6) — still need a "Candidates" database, an "Incidents" database, a "Proposals" database/page, and an "Executive Dashboard" page. Record all database/page IDs in `mcp/config.py`.
+8. **Implement `orchestrator/tools/notion_tool.py`:** wraps the MCP client, applies each agent's `notion_templates/*.md` mapping (start with `job_description_page.md` against the live schema), and enforces the create-vs-update idempotency rule against `notion_page_id`.
+9. **Add `status` to the `JOBS` table** (Section 7) to mirror the `OPEN`/status tag already present in the Notion "Job Descriptions" view.
+10. **Add the sync-notion endpoints and `sync_to_notion` flag** to each agent's routes, plus a background retry worker driven by `NOTION_SYNC_LOG` for failed syncs.
+11. Write integration tests simulating the end-to-end flows in Section 3, including `tests/mcp/test_notion_sync.py` for create/update/retry behavior.
