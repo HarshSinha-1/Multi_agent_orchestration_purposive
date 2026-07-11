@@ -72,6 +72,7 @@ class OrchestratorState(TypedDict):
     response: Optional[AgentResponse]
     trace: list[str]
     history: Optional[list[dict]]
+    job_id: Optional[str]
 
 # ── Helper to build response ──────────────────────────────────────────────────
 
@@ -127,11 +128,55 @@ def hr_node(state: OrchestratorState) -> dict:
     except Exception as e:
         logger.error(f"HR Node intent detection failed: {e}")
 
-    # 2. Conversational response
+    # 2. Retrieve job and candidate context if job_id is provided
+    job_context = ""
+    job_id = state.get("job_id")
+    if job_id:
+        from orchestrator.tools.notion_tool import fetch_job_from_notion
+        notion_job = fetch_job_from_notion(job_id)
+        jd_text = ""
+        job_title = ""
+        if notion_job and notion_job.get("full_jd_text"):
+            jd_text = notion_job["full_jd_text"]
+            job_title = notion_job.get("title", "")
+            logger.info(f"Loaded job JD from Notion for HR chat context: {job_id}")
+        else:
+            with Session(engine) as session:
+                from sqlmodel import select
+                from agents.hr_agent.models import Job
+                job = session.exec(select(Job).where(Job.job_id == job_id)).first()
+                if job:
+                    jd_text = job.full_jd_text
+                    job_title = job.title
+                    logger.info(f"Loaded job JD from DB fallback for HR chat context: {job_id}")
+        
+        if jd_text:
+            job_context += f"\n[Selected Job Context (from live Notion MCP):\nJob ID: {job_id}\nJob Title: {job_title}\nJob Description:\n{jd_text}]\n"
+            
+        # Also fetch candidates screened for this job to give complete context
+        with Session(engine) as session:
+            from sqlmodel import select
+            from agents.hr_agent.models import Candidate
+            candidates = session.exec(select(Candidate).where(Candidate.job_id == job_id)).all()
+            if candidates:
+                job_context += "\n[Already Screened Candidates for this Job:\n"
+                for cand in candidates:
+                    job_context += (
+                        f"- Name: {cand.name} (ID: {cand.candidate_id})\n"
+                        f"  Match Score: {cand.match_score * 100:.0f}%\n"
+                        f"  Recommendation: {cand.recommendation.upper()}\n"
+                        f"  Skills: {cand.skills}\n"
+                        f"  Missing: {cand.missing_skills}\n"
+                        f"  Summary: {cand.summary}\n"
+                    )
+                job_context += "]"
+
+    # 3. Conversational response
     system_prompt = (
         "You are the HR Specialist Agent. You manage recruitment, resume screening, and job inquiries. "
         "Provide a detailed, helpful, and professional response to the user query. "
         "Keep your output structured, clear, and focused on HR topics.\n"
+        f"{job_context}"
         f"{action_context}"
     )
     
@@ -352,7 +397,8 @@ app = build_graph()
 def run_pipeline(
     query: str, 
     domain: Literal["hr", "it", "sales", "executive"], 
-    history: Optional[list[dict]] = None
+    history: Optional[list[dict]] = None,
+    job_id: Optional[str] = None
 ) -> AgentResponse:
     """Runs the multi-agent graph orchestration pipeline for a given query and domain."""
     initial_state: OrchestratorState = {
@@ -360,7 +406,8 @@ def run_pipeline(
         "domain": domain,
         "response": None,
         "trace": [],
-        "history": history
+        "history": history,
+        "job_id": job_id
     }
     final_state = app.invoke(initial_state)
     return final_state["response"]

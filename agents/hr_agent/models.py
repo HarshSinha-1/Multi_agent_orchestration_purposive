@@ -8,6 +8,7 @@ class Job(SQLModel, table=True):
     department: str
     full_jd_text: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    notion_page_id: Optional[str] = Field(default=None, nullable=True)
 
 class Candidate(SQLModel, table=True):
     candidate_id: str = Field(primary_key=True)
@@ -20,3 +21,5 @@ class Candidate(SQLModel, table=True):
     recommendation: str
     summary: str
     created_at: datetime = Field(default_factory=datetime.utcnow)
+    notion_page_id: Optional[str] = Field(default=None, nullable=True)
+

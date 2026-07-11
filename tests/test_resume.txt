@@ -1,0 +1,7 @@
+Harsh Sinha
+Software Engineer
+
+TECHNICAL SKILLS:
+- Languages: Python, JavaScript, SQL
+- Frameworks: FastAPI, React
+- Tools: Git, Docker, Postgres, AWS

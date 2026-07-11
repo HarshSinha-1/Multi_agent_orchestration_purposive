@@ -6,9 +6,10 @@ export type AgentType = 'hr' | 'it' | 'sales' | 'executive';
 interface AgentSelectorProps {
   selectedAgent: AgentType;
   onChange: (agent: AgentType) => void;
+  notionMcpStatus: 'checking' | 'connected' | 'disconnected';
 }
 
-export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onChange }) => {
+export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onChange, notionMcpStatus }) => {
   const agents = [
     {
       id: 'hr' as AgentType,
@@ -79,6 +80,10 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onC
               }}
             >
               <div
+                className={agent.id === 'hr' ? (
+                  notionMcpStatus === 'connected' ? 'mcp-radar-connected' :
+                  notionMcpStatus === 'disconnected' ? 'mcp-radar-disconnected' : 'mcp-radar-checking'
+                ) : ''}
                 style={{
                   display: 'flex',
                   alignItems: 'center',
@@ -93,7 +98,7 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onC
               >
                 <Icon size={20} />
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', width: '100%', minWidth: 0 }}>
                 <span
                   style={{
                     fontSize: '0.9rem',
@@ -103,9 +108,56 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onC
                 >
                   {agent.name}
                 </span>
-                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', opacity: 0.8 }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', opacity: 0.8, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {agent.desc}
                 </span>
+                {agent.id === 'hr' && (
+                  <span 
+                    style={{
+                      fontSize: '0.625rem',
+                      padding: '2px 6px',
+                      borderRadius: '8px',
+                      background: notionMcpStatus === 'connected' 
+                        ? 'rgba(0, 255, 136, 0.08)' 
+                        : notionMcpStatus === 'disconnected' 
+                          ? 'rgba(255, 51, 51, 0.08)' 
+                          : 'rgba(255, 187, 0, 0.08)',
+                      border: notionMcpStatus === 'connected' 
+                        ? '1px solid rgba(0, 255, 136, 0.3)' 
+                        : notionMcpStatus === 'disconnected' 
+                          ? '1px solid rgba(255, 51, 51, 0.3)' 
+                          : '1px solid rgba(255, 187, 0, 0.3)',
+                      color: notionMcpStatus === 'connected' 
+                        ? '#00ff88' 
+                        : notionMcpStatus === 'disconnected' 
+                          ? '#ff4444' 
+                          : '#ffbb00',
+                      fontWeight: 600,
+                      marginTop: '4px',
+                      alignSelf: 'flex-start',
+                      width: 'fit-content',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    <span 
+                      className="mcp-status-dot-pulse"
+                      style={{ 
+                        width: '4px', 
+                        height: '4px', 
+                        borderRadius: '50%', 
+                        background: 'currentColor',
+                        display: 'inline-block'
+                      }}
+                    />
+                    {notionMcpStatus === 'connected' 
+                      ? 'Notion Active' 
+                      : notionMcpStatus === 'disconnected' 
+                        ? 'Notion Offline' 
+                        : 'Checking...'}
+                  </span>
+                )}
               </div>
             </button>
           );
@@ -118,3 +170,4 @@ export const AgentSelector: React.FC<AgentSelectorProps> = ({ selectedAgent, onC
     </div>
   );
 };
+

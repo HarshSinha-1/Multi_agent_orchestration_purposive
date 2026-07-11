@@ -6,9 +6,11 @@ import { Send, AlertCircle, RefreshCw, Paperclip } from 'lucide-react';
 
 interface ChatWindowProps {
   agentType: AgentType;
+  notionMcpStatus: 'checking' | 'connected' | 'disconnected';
+  onCheckNotionStatus: () => void;
 }
 
-export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
+export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType, notionMcpStatus, onCheckNotionStatus }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -18,8 +20,15 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
   const [kpis, setKpis] = useState<any>(null);
   const [loadingKpis, setLoadingKpis] = useState(false);
 
+  // Job list state for HR mode
+  const [availableJobs, setAvailableJobs] = useState<any[]>([]);
+  const [selectedJobId, setSelectedJobId] = useState<string>('');
+  const [loadingJobs, setLoadingJobs] = useState(false);
+
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
 
   // Initialize with greeting messages matching the agent
   useEffect(() => {
@@ -46,7 +55,37 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
     } else {
       setKpis(null);
     }
+
+    // Fetch jobs if HR Agent is selected
+    if (agentType === 'hr') {
+      fetchJobs();
+      onCheckNotionStatus();
+    } else {
+      setAvailableJobs([]);
+      setSelectedJobId('');
+    }
   }, [agentType]);
+
+  const fetchJobs = async () => {
+    setLoadingJobs(true);
+    try {
+      const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+      const res = await fetch(`${backendUrl}/api/v1/hr/jobs`);
+      if (res.ok) {
+        const data = await res.json();
+        setAvailableJobs(data);
+        if (data.length > 0) {
+          setSelectedJobId(data[0].job_id);
+        }
+      }
+    } catch (err) {
+      console.error("Failed to load jobs", err);
+    } finally {
+      setLoadingJobs(false);
+    }
+  };
+
+
 
   // Scroll to bottom
   useEffect(() => {
@@ -93,23 +132,10 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
 
     try {
       if (agentType === 'hr') {
-        // Create requisition automatically
-        const jobRes = await fetch(`${backendUrl}/api/v1/hr/jobs`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            title: "Automated Evaluation Requisition",
-            department: "AI & Software Division",
-            full_jd_text: "Requires developer experience, programming languages (Python, JavaScript, Go etc), framework knowledge (FastAPI, React etc), database usage (SQL/NoSQL) and vector indexing."
-          })
-        });
-
-        if (!jobRes.ok) {
-          throw new Error("Failed to initialize job requisition for candidate screening");
+        if (!selectedJobId) {
+          throw new Error("No job selected. Please select a role from the dropdown list first.");
         }
-
-        const jobData = await jobRes.json();
-        const jobId = jobData.job_id;
+        const jobId = selectedJobId;
 
         // Upload resume via FormData
         const formData = new FormData();
@@ -120,6 +146,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
           method: 'POST',
           body: formData
         });
+
 
         if (!uploadRes.ok) {
           throw new Error("Failed to process resume screening on server");
@@ -134,10 +161,10 @@ Match Score: **${(candidateData.match_score * 100).toFixed(0)}%**
 Recommendation: **${candidateData.recommendation.toUpperCase()}**
 
 **Skills Matched:**
-${candidateData.skills ? candidateData.skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
+${candidateData.skills && candidateData.skills.trim() ? candidateData.skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
 
 **Skills Missing:**
-${candidateData.missing_skills ? candidateData.missing_skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
+${candidateData.missing_skills && candidateData.missing_skills.trim() ? candidateData.missing_skills.split(',').map((s: string) => `- ${s}`).join('\n') : 'None Identified'}
 
 **Summary Evaluation:**
 ${candidateData.summary}`;
@@ -296,7 +323,8 @@ ${rcaData.recommended_fix}`;
         body: JSON.stringify({
           message: userQuery,
           agent: agentType,
-          history: historyPayload
+          history: historyPayload,
+          ...(agentType === 'hr' && selectedJobId ? { job_id: selectedJobId } : {})
         }),
       });
 
@@ -376,6 +404,76 @@ ${rcaData.recommended_fix}`;
             Sync Metrics
           </button>
         )}
+
+        {agentType === 'hr' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}>
+            <span style={{ color: 'var(--text-secondary)' }}>Status:</span>
+            <div 
+              style={{ 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '6px',
+                padding: '4px 10px',
+                borderRadius: '20px',
+                background: notionMcpStatus === 'connected' 
+                  ? 'rgba(0, 255, 136, 0.08)' 
+                  : notionMcpStatus === 'disconnected' 
+                    ? 'rgba(255, 51, 51, 0.08)' 
+                    : 'rgba(255, 187, 0, 0.08)',
+                border: notionMcpStatus === 'connected' 
+                  ? '1px solid rgba(0, 255, 136, 0.3)' 
+                  : notionMcpStatus === 'disconnected' 
+                    ? '1px solid rgba(255, 51, 51, 0.3)' 
+                    : '1px solid rgba(255, 187, 0, 0.3)',
+                color: notionMcpStatus === 'connected' 
+                  ? '#00ff88' 
+                  : notionMcpStatus === 'disconnected' 
+                    ? '#ff4444' 
+                    : '#ffbb00',
+                fontWeight: 500,
+                fontSize: '0.8rem',
+              }}
+            >
+              <span 
+                className="mcp-status-dot-pulse"
+                style={{ 
+                  width: '6px', 
+                  height: '6px', 
+                  borderRadius: '50%', 
+                  background: 'currentColor',
+                  display: 'inline-block',
+                  boxShadow: notionMcpStatus === 'connected' 
+                    ? '0 0 8px #00ff88' 
+                    : notionMcpStatus === 'disconnected' 
+                      ? '0 0 8px #ff4444' 
+                      : '0 0 8px #ffbb00',
+                }}
+              />
+              {notionMcpStatus === 'connected' 
+                ? 'Notion MCP Online' 
+                : notionMcpStatus === 'disconnected' 
+                  ? 'Notion MCP Offline' 
+                  : 'Checking Notion MCP...'}
+            </div>
+            <button 
+              type="button"
+              onClick={onCheckNotionStatus}
+              style={{
+                background: 'none',
+                border: 'none',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                padding: '2px',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+              title="Refresh connection status"
+            >
+              <RefreshCw size={12} className={notionMcpStatus === 'checking' ? 'animate-spin' : ''} />
+            </button>
+          </div>
+        )}
+
       </div>
 
       {/* KPI metrics layout for Executive Agent */}
@@ -492,10 +590,38 @@ ${rcaData.recommended_fix}`;
             cursor: 'pointer',
             transition: 'var(--transition-smooth)',
             outline: 'none',
+            flexShrink: 0,
           }}
         >
           <Paperclip size={18} />
         </button>
+
+        {agentType === 'hr' && availableJobs.length > 0 && (
+          <select
+            value={selectedJobId}
+            onChange={(e) => setSelectedJobId(e.target.value)}
+            disabled={isLoading}
+            style={{
+              background: 'rgba(255,255,255,0.05)',
+              border: '1px solid var(--border-glass)',
+              borderRadius: '12px',
+              padding: '12px 14px',
+              color: 'var(--text-primary)',
+              fontSize: '0.85rem',
+              outline: 'none',
+              cursor: 'pointer',
+              maxWidth: '220px',
+              flexShrink: 0,
+            }}
+          >
+            {availableJobs.map((j) => (
+              <option key={j.job_id} value={j.job_id} style={{ background: '#1c1c24', color: '#fff' }}>
+                {j.title}
+              </option>
+            ))}
+          </select>
+        )}
+
         <input
           type="text"
           value={inputValue}

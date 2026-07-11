@@ -89,12 +89,36 @@ class ChatRequest(BaseModel):
     message: str
     agent: Literal["hr", "it", "sales", "executive"]
     history: Optional[list[ChatMessage]] = None
+    job_id: Optional[str] = None
 
 # --- 1. HR Agent Endpoints ---
 
 @hr_router.post("/jobs", response_model=Job)
 def create_job(payload: JobCreate, session: Session = Depends(get_session)):
     return hr_service.create_job(session, payload.title, payload.department, payload.full_jd_text)
+
+@hr_router.get("/jobs", response_model=list[Job])
+def list_jobs(session: Session = Depends(get_session)):
+    return hr_service.list_jobs(session)
+
+@hr_router.get("/notion-status")
+def get_notion_status():
+    """Checks the live connection to the Notion MCP database."""
+    try:
+        from mcp.notion_mcp_client import NotionMCPClient
+        from mcp.config import NOTION_DATABASE_ID
+        
+        client = NotionMCPClient()
+        # Query database with a limit of 1 to verify connectivity
+        res = client.call_tool("notion_query_database", {"database_id": NOTION_DATABASE_ID, "page_size": 1})
+        if res and "results" in res:
+            return {"status": "connected", "database_id": NOTION_DATABASE_ID}
+        else:
+            return {"status": "error", "detail": "Invalid response structure from Notion"}
+    except Exception as e:
+        return {"status": "disconnected", "error": str(e)}
+
+
 
 @hr_router.post("/resumes/screen", response_model=Candidate)
 def screen_resume(payload: ResumeScreenRequest, session: Session = Depends(get_session)):
@@ -221,7 +245,8 @@ def unified_chat(payload: ChatRequest):
         response = run_pipeline(
             query=payload.message, 
             domain=payload.agent, 
-            history=history_list
+            history=history_list,
+            job_id=payload.job_id
         )
         return {
             "agent_id": response.agent_id,

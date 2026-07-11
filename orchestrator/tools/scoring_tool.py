@@ -24,7 +24,12 @@ def score_resume(resume_text: str, job_requirements: str) -> ResumeScreeningResu
     system_prompt = (
         "You are an expert HR recruiter. Read the candidate's resume and screen it against the job requirements. "
         "Calculate a match score between 0.0 and 1.0 (with 1.0 being perfect). Identify matching skills, missing "
-        "skills, give a recommendation ('shortlist', 'archive', 'hold'), and write a brief summary."
+        "skills, give a recommendation ('shortlist', 'archive', 'hold'), and write a structured summary evaluation. "
+        "For any recommendation (shortlist, hold, or archive), the summary MUST explicitly include:\n"
+        "Reason: [The detailed reason for the decision]\n"
+        "Gap: [The specific skills/requirements missing]\n"
+        "Recommendation: [The next steps for this candidate]\n"
+        "Keep the summary concise, professional, and well-structured."
     )
     
     user_prompt = f"### Job Requirements:\n{job_requirements}\n\n### Resume Text:\n{resume_text}"
