@@ -100,7 +100,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({ agentType }) => {
           body: JSON.stringify({
             title: "Automated Evaluation Requisition",
             department: "AI & Software Division",
-            requirements: "Requires developer experience, programming languages (Python, JavaScript, Go etc), framework knowledge (FastAPI, React etc), database usage (SQL/NoSQL) and vector indexing."
+            full_jd_text: "Requires developer experience, programming languages (Python, JavaScript, Go etc), framework knowledge (FastAPI, React etc), database usage (SQL/NoSQL) and vector indexing."
           })
         });
 

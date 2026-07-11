@@ -15,6 +15,68 @@ interface MessageBubbleProps {
   message: Message;
 }
 
+const formatMessageText = (text: string) => {
+  if (!text) return "";
+  const lines = text.split('\n');
+
+  return lines.map((line, lineIndex) => {
+    let content: React.ReactNode = line;
+    let isHeader = false;
+    let headerLevel = 0;
+    let isListItem = false;
+
+    // Check for headers (e.g. ### Header)
+    const headerMatch = line.match(/^(#{1,6})\s+(.*)$/);
+    if (headerMatch) {
+      isHeader = true;
+      headerLevel = headerMatch[1].length;
+      content = headerMatch[2];
+    } else {
+      // Check for bullet items
+      const listMatch = line.match(/^(\s*)[-*+]\s+(.*)$/);
+      if (listMatch) {
+        isListItem = true;
+        content = listMatch[2];
+      }
+    }
+
+    // Parse bold markdown **text** inside the line
+    if (typeof content === 'string') {
+      const parts = content.split(/(\*\*.*?\*\*)/g);
+      content = parts.map((part, partIndex) => {
+        if (part.startsWith('**') && part.endsWith('**')) {
+          return <strong key={partIndex}>{part.slice(2, -2)}</strong>;
+        }
+        return part;
+      });
+    }
+
+    if (isHeader) {
+      const HeaderTag = `h${Math.min(headerLevel + 2, 6)}` as keyof JSX.IntrinsicElements;
+      return (
+        <HeaderTag key={lineIndex} style={{ margin: '12px 0 6px 0', fontWeight: 700, color: 'inherit' }}>
+          {content}
+        </HeaderTag>
+      );
+    }
+
+    if (isListItem) {
+      return (
+        <div key={lineIndex} style={{ display: 'flex', alignItems: 'flex-start', margin: '4px 0 4px 8px' }}>
+          <span style={{ marginRight: '6px' }}>•</span>
+          <div>{content}</div>
+        </div>
+      );
+    }
+
+    return (
+      <div key={lineIndex} style={{ minHeight: '1.2em', marginBottom: lineIndex === lines.length - 1 ? 0 : '4px' }}>
+        {content}
+      </div>
+    );
+  });
+};
+
 export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
   const isUser = message.sender === 'user';
   
@@ -81,10 +143,9 @@ export const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
             fontSize: '0.925rem',
             lineHeight: 1.5,
             color: 'var(--text-primary)',
-            whiteSpace: 'pre-wrap',
           }}
         >
-          {message.text}
+          {formatMessageText(message.text)}
         </div>
 
         {!isUser && message.processingTime !== undefined && (
